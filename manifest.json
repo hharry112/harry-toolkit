@@ -1,8 +1,8 @@
 {
   "id": "harry-toolkit",
   "name": "Harry Toolkit",
-  "version": "0.1.0",
-  "minAppVersion": "1.5.0",
+  "version": "0.1.1",
+  "minAppVersion": "1.7.2",
   "description": "A personal toolkit: typewriter-style scrolling, a publishing calendar with article scheduling and to-dos, and a Threads analytics dashboard (official API, read-only). All data stays in your vault.",
   "author": "read.by.harry",
   "authorUrl": "https://github.com/hharry112",

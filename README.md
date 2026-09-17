@@ -2,6 +2,8 @@
 
 English ｜ [繁體中文](README.zh-TW.md)
 
+Requires Obsidian 1.7.2 or later.
+
 A personal toolkit for Obsidian that bundles a few small, self-contained tools for writers.
 Every feature can be turned on or off individually in settings — a disabled feature adds no
 commands, no views and no notices.
