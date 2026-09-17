@@ -1,0 +1,634 @@
+/* ===== Writer Scheduler 共用 ===== */
+.ws-icon-btn {
+  cursor: pointer;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 4px;
+}
+.ws-icon-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+/* ===== 發佈月曆 ===== */
+.ws-calendar {
+  overflow-x: auto;
+}
+.ws-cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.ws-cal-title {
+  font-weight: 600;
+  font-size: 1.05em;
+}
+.ws-cal-hint {
+  font-size: 0.78em;
+  color: var(--text-faint);
+}
+.ws-cal-today-btn {
+  margin-left: auto;
+  font-size: 0.85em;
+  padding: 2px 10px;
+}
+.ws-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(90px, 1fr));
+  gap: 3px;
+  min-width: 660px;
+}
+.ws-cal-weekday {
+  text-align: center;
+  font-size: 0.8em;
+  color: var(--text-muted);
+  padding: 3px 0;
+}
+.ws-cal-cell {
+  min-height: 76px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  padding: 3px 4px;
+  background: var(--background-primary);
+  cursor: pointer;
+}
+.ws-cal-cell:hover {
+  background: var(--background-modifier-hover);
+}
+.ws-cal-empty {
+  border: none;
+  background: transparent;
+  cursor: default;
+}
+.ws-cal-today {
+  border-color: var(--interactive-accent);
+  box-shadow: inset 0 0 0 1px var(--interactive-accent);
+}
+.ws-cal-daynum {
+  font-size: 0.78em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.ws-cal-today .ws-cal-daynum {
+  color: var(--interactive-accent);
+  font-weight: 700;
+}
+
+/* 日期數字＝每日筆記按鈕 */
+.ws-daynum-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.ws-daynum-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
+}
+.ws-daily-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--interactive-accent);
+  flex-shrink: 0;
+}
+
+/* 事件（文章 / 待辦） */
+.ws-cal-event {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.72em;
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-bottom: 2px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ws-cal-event span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-ev-scheduled {
+  background: rgba(var(--color-blue-rgb), 0.18);
+  color: var(--color-blue);
+}
+.ws-ev-published {
+  background: rgba(var(--color-green-rgb), 0.18);
+  color: var(--color-green);
+  cursor: default;
+}
+.ws-ev-todo {
+  background: rgba(var(--color-purple-rgb), 0.18);
+  color: var(--color-purple);
+}
+.ws-ev-pinned {
+  background: rgba(var(--color-orange-rgb), 0.18);
+  color: var(--color-orange);
+}
+/* 草稿：刻意用中性灰而不是第五種顏色。一來「還沒排程」本來就該低調，
+   二來剩下的色相（黃）在淺色主題下小字對比太差。 */
+.ws-ev-draft {
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px var(--background-modifier-border);
+}
+.ws-ev-pin-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.ws-ev-pin-icon svg {
+  width: 11px;
+  height: 11px;
+}
+.ws-ev-remove,
+.ws-ev-edit,
+.ws-ev-publish {
+  flex-shrink: 0;
+  margin-left: 2px;
+  padding: 0 1px;
+}
+.ws-ev-remove svg,
+.ws-ev-publish svg {
+  width: 12px;
+  height: 12px;
+}
+.ws-ev-edit svg {
+  width: 11px;
+  height: 11px;
+}
+/* ✓ 用綠色呼應「已發佈」的配色，跟旁邊的 × 一眼分得開 */
+.ws-ev-publish:hover {
+  color: var(--color-green);
+}
+/* 月曆格子空間有限：✓、× 與鉛筆平常隱藏，滑過事件方塊才出現（底部收合區則常駐） */
+.ws-cal-grid .ws-ev-remove,
+.ws-cal-grid .ws-ev-edit,
+.ws-cal-grid .ws-ev-publish {
+  display: none;
+}
+.ws-cal-grid .ws-cal-event:hover .ws-ev-remove,
+.ws-cal-grid .ws-cal-event:hover .ws-ev-edit,
+.ws-cal-grid .ws-cal-event:hover .ws-ev-publish {
+  display: inline-flex;
+}
+.ws-cal-grid .ws-cal-event:hover .ws-ev-edit {
+  margin-left: auto;
+}
+
+/* 待辦原地編輯的輸入框 */
+.ws-ev-edit-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 1em;
+  height: 1.6em;
+  padding: 0 4px;
+}
+.ws-ev-overdue {
+  box-shadow: inset 0 0 0 1px var(--color-red);
+  color: var(--color-red);
+}
+.ws-ev-check {
+  margin: 0;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+/* 拖放狀態 */
+.ws-cal-event[draggable="true"] {
+  cursor: grab;
+}
+.ws-dragging {
+  opacity: 0.4;
+}
+.ws-drop-target {
+  background: rgba(var(--color-blue-rgb), 0.12) !important;
+  border-color: var(--color-blue) !important;
+}
+.ws-flip-hot {
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
+}
+
+/* 底部收合區的總開關（全部展開／全部收合） */
+.ws-sec-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+/* 緊接在下面的第一個收合區不用再撐一次間距 */
+.ws-sec-bar + details {
+  margin-top: 4px;
+}
+.ws-sec-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.78em;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.ws-sec-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.ws-sec-icon {
+  display: inline-flex;
+}
+.ws-sec-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 未排定待辦、已排定事項、釘選筆記、草稿（共用收合區樣式） */
+.ws-unscheduled,
+.ws-scheduled,
+.ws-pinned,
+.ws-drafts {
+  margin-top: 12px;
+}
+.ws-unscheduled summary,
+.ws-scheduled summary,
+.ws-pinned summary,
+.ws-drafts summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  margin-bottom: 4px;
+}
+.ws-unscheduled .ws-cal-event,
+.ws-scheduled .ws-cal-event,
+.ws-pinned .ws-cal-event,
+.ws-drafts .ws-cal-event {
+  display: inline-flex;
+  max-width: 260px;
+  margin-right: 4px;
+  font-size: 0.8em;
+  padding: 2px 6px;
+}
+
+/* 已排定事項：一項一列，前面帶日期標籤 */
+.ws-sch-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.ws-sch-date {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  width: 9em;
+}
+.ws-sch-row .ws-cal-event {
+  margin-bottom: 0;
+}
+.ws-unsch-add {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 6px 0;
+}
+.ws-unsch-add input {
+  width: 260px;
+  max-width: 100%;
+}
+
+/* ===== 檔案瀏覽（月曆底部的第五個收合區） ===== */
+.ht-fb {
+  margin-top: 12px;
+}
+.ht-fb summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  margin-bottom: 4px;
+}
+.ht-fb-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.ht-fb-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8em;
+}
+.ht-fb-crumb {
+  cursor: pointer;
+  color: var(--text-accent);
+  padding: 0 2px;
+  border-radius: 3px;
+}
+.ht-fb-crumb:hover {
+  background: var(--background-modifier-hover);
+}
+/* 目前這一層不是連結，不給點也不給 hover 效果 */
+.ht-fb-crumb-current,
+.ht-fb-crumb-current:hover {
+  color: var(--text-muted);
+  cursor: default;
+  background: transparent;
+}
+.ht-fb-sep {
+  color: var(--text-faint);
+}
+/* 已在根目錄時的「回上一層」 */
+.ht-fb-disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.ht-fb-fav,
+.ht-fb-sort {
+  flex-shrink: 0;
+}
+.ht-fb-filter {
+  margin-bottom: 4px;
+}
+.ht-fb-filter input {
+  width: 260px;
+  max-width: 100%;
+  font-size: 0.85em;
+}
+/* 高度上限＋內部捲動：資料夾裡檔案再多也不會把整個側邊欄撐長 */
+.ht-fb-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 5px;
+  padding: 3px;
+}
+.ht-fb-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.82em;
+  padding: 2px 5px;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ht-fb-row:hover {
+  background: var(--background-modifier-hover);
+}
+.ht-fb-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.ht-fb-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.ht-fb-folder-row .ht-fb-icon {
+  color: var(--text-accent);
+}
+.ht-fb-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ht-fb-row[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+/* ===== Threads 數據面板 ===== */
+.ht-threads {
+  padding: 8px 12px 24px;
+  overflow-y: auto;
+}
+.ht-threads-header {
+  margin-bottom: 8px;
+}
+.ht-threads-account {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.ht-threads-username {
+  font-weight: 600;
+  font-size: 1.1em;
+}
+.ht-threads-followers {
+  color: var(--text-muted);
+}
+.ht-threads-up {
+  color: var(--color-green);
+  font-size: 0.85em;
+}
+.ht-threads-down {
+  color: var(--color-red);
+  font-size: 0.85em;
+}
+.ht-threads-sub {
+  font-size: 0.8em;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.ht-threads-error {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  font-size: 0.85em;
+  color: var(--text-error);
+  background: var(--background-modifier-error);
+}
+.ht-threads-hint {
+  font-size: 0.78em;
+  color: var(--text-faint);
+}
+.ht-threads-empty {
+  padding: 16px 4px;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+/* 工具列與進度 */
+.ht-threads-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.ht-threads-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 6px;
+}
+.ht-threads-progress {
+  margin-bottom: 8px;
+}
+.ht-threads-progress-text {
+  font-size: 0.82em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.ht-threads-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  overflow: hidden;
+}
+.ht-threads-bar-fill {
+  height: 100%;
+  background: var(--interactive-accent);
+  transition: width 0.2s ease;
+}
+
+/* 追蹤人數走勢 */
+.ht-threads-chart {
+  margin-bottom: 10px;
+}
+.ht-threads-chart-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.ht-threads-spark {
+  width: 100%;
+  height: 90px;
+  display: block;
+}
+.ht-threads-spark polyline {
+  fill: none;
+  stroke: var(--interactive-accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/* 篩選列 */
+.ht-threads-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.ht-threads-search {
+  flex: 1 1 140px;
+  min-width: 120px;
+}
+.ht-threads-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* 貼文清單 */
+.ht-threads-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 6px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.ht-threads-clickable {
+  cursor: pointer;
+}
+.ht-threads-clickable:hover {
+  background: var(--background-modifier-hover);
+}
+.ht-threads-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ht-threads-text {
+  font-size: 0.9em;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ht-threads-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 0.75em;
+  color: var(--text-faint);
+}
+.ht-threads-tag {
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+.ht-threads-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  flex-shrink: 0;
+  /* 六格數字在窄側邊欄放不下時換行，不要把貼文內容擠成一條線 */
+  max-width: 55%;
+}
+.ht-threads-stat {
+  min-width: 38px;
+  text-align: right;
+}
+.ht-threads-stat-active .ht-threads-stat-value {
+  color: var(--text-accent);
+  font-weight: 600;
+}
+.ht-threads-stat-active .ht-threads-stat-label {
+  color: var(--text-accent);
+}
+.ht-threads-stat-value {
+  font-size: 0.9em;
+  font-variant-numeric: tabular-nums;
+}
+.ht-threads-stat-label {
+  font-size: 0.68em;
+  color: var(--text-faint);
+}
+.ht-threads-more {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+}
+
+/* 設定頁 */
+.ht-threads-setting-status {
+  font-size: 0.82em;
+  color: var(--text-muted);
+  padding: 2px 0 6px;
+}
+.ht-threads-notice {
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 5px;
+  background: var(--background-secondary);
+  line-height: 1.5;
+}
+.ht-threads-stat-na {
+  color: var(--text-faint);
+}
+
+/* 對話框與設定頁裡要占滿寬度的輸入框（不在程式裡硬寫 style，遵循 Obsidian 插件準則） */
+.ht-wide-input {
+  width: 100%;
+}

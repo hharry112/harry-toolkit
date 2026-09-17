@@ -1,0 +1,8 @@
+node_modules/
+.node/
+main.js
+deploy.config.json
+
+# 個人開發記錄，不上傳
+AGENTS.md
+CLAUDE.md
