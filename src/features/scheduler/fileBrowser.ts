@@ -1,6 +1,17 @@
 import { App, Keymap, Menu, Notice, TFile, TFolder, setIcon } from "obsidian";
 import { ConfirmModal, RenameModal } from "./modals";
-import type { FileSortKey, SchedulerSettings } from "./types";
+import type { FileSort, FileSortKey, SchedulerSettings } from "./types";
+
+/** vault 根目錄的 path 是 "/"，設定裡用空字串表示，比較前一律正規化 */
+const norm = (path: string) => (path === "/" ? "" : path);
+
+/** folder 是不是在 root 底下（或就是 root）。root 是 vault 根目錄時一律成立 */
+function isUnder(folder: TFolder, root: TFolder): boolean {
+  const base = norm(root.path);
+  if (!base) return true;
+  const path = norm(folder.path);
+  return path === base || path.startsWith(`${base}/`);
+}
 
 /** 圖片類副檔名，只影響清單上的小圖示 */
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"]);
@@ -56,12 +67,34 @@ export interface FileBrowserHost {
  * 所以重開 Obsidian 還會停在原本那個資料夾。
  */
 export class FileBrowser {
-  /** 預設收合：月曆一打開的畫面要跟沒有這個功能時一模一樣 */
-  private open = false;
+  /** 預設展開，與月曆其他四個收合區一致（使用者 2026-09-18 要求） */
+  private open = true;
   /** 篩選只對目前這一層有效，換資料夾就清掉 */
   private filter = "";
+  /** 延後存檔的計時器（見 saveSoon） */
+  private saveTimer: number | null = null;
 
   constructor(private host: FileBrowserHost) {}
+
+  /**
+   * 延後存檔。
+   *
+   * **絕對不要 `await` 存檔之後才重畫畫面。** `save()` 寫的是
+   * `.obsidian/plugins/harry-toolkit/data.json`，而 vault 常常放在 Google Drive、
+   * OneDrive 這類同步資料夾裡 —— 那裡寫一個檔案要經過同步驅動，慢上好幾秒是常態。
+   * 等它回來才更新畫面，點一下資料夾就像卡住了（2026-09-18 實際踩到）。
+   *
+   * 這裡記的只是「上次停在哪個資料夾」「這個資料夾怎麼排序」，晚幾百毫秒寫進去
+   * 完全沒有影響，所以一律先重畫、再讓存檔自己慢慢去。
+   * 順便去抖動：連點好幾個資料夾時只寫最後一次。
+   */
+  private saveSoon() {
+    if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
+    this.saveTimer = window.setTimeout(() => {
+      this.saveTimer = null;
+      void this.host.save();
+    }, 400);
+  }
 
   /** 給月曆的「全部展開／全部收合」用；下次重繪時生效 */
   setOpen(open: boolean) {
@@ -80,16 +113,17 @@ export class FileBrowser {
     this.renderBody(body);
   }
 
-  /** 換資料夾時整塊重畫（工具列、篩選框、清單都會變） */
+  /** 換資料夾或換選取時整塊重畫（工具列、篩選框、兩欄都會變） */
   private renderBody(body: HTMLElement) {
     body.empty();
     const folder = this.currentFolder();
+    const picked = this.pickedFolder();
 
     // 收起來的時候也看得出停在哪個資料夾
     const summary = body.parentElement?.querySelector<HTMLElement>("summary");
     if (summary) summary.setText(`檔案瀏覽（${folder.isRoot() ? "vault 根目錄" : folder.name}）`);
 
-    // ===== 工具列：上一層 ← 麵包屑 → 常用資料夾 =====
+    // ===== 工具列：上一層 ← 麵包屑 → 排序、常用資料夾 =====
     const bar = body.createDiv({ cls: "ht-fb-bar" });
     const up = bar.createEl("span", { cls: "ws-icon-btn", attr: { "aria-label": "回上一層" } });
     setIcon(up, "corner-left-up");
@@ -114,12 +148,15 @@ export class FileBrowser {
       else crumb.onclick = () => this.goTo(path, body);
     });
 
+    // 排序是「這個資料夾的」，提示文字要把資料夾名講出來，不然會以為是全域設定
     const sort = bar.createEl("span", {
       cls: "ws-icon-btn ht-fb-sort",
-      attr: { "aria-label": `排序：${this.sortLabel()}` },
+      attr: {
+        "aria-label": `「${this.folderLabel(picked)}」的排序：${this.sortLabel(picked.path)}`,
+      },
     });
     setIcon(sort, "arrow-up-narrow-wide");
-    sort.onclick = (e) => this.showSortMenu(e, body);
+    sort.onclick = (e) => this.showSortMenu(e, body, picked);
 
     const fav = bar.createEl("span", {
       cls: "ws-icon-btn ht-fb-fav",
@@ -128,55 +165,144 @@ export class FileBrowser {
     setIcon(fav, "star");
     fav.onclick = (e) => this.showFavMenu(e, body);
 
-    // ===== 篩選（只濾目前這一層；打字時只重畫清單，輸入焦點不會掉） =====
+    // ===== 篩選（只濾右欄；打字時只重畫右欄，輸入焦點不會掉） =====
     const filterRow = body.createDiv({ cls: "ht-fb-filter" });
     const input = filterRow.createEl("input", {
       type: "text",
-      placeholder: "篩選這層…",
+      placeholder: `篩選「${this.folderLabel(picked)}」裡的檔案…`,
       value: this.filter,
     });
 
-    const list = body.createDiv({ cls: "ht-fb-list" });
+    // ===== 兩欄：左邊是資料夾樹，右邊只有選中那個資料夾裡的檔案 =====
+    const cols = body.createDiv({ cls: "ht-fb-cols" });
+    const left = cols.createDiv({ cls: "ht-fb-list ht-fb-folders" });
+    const right = cols.createDiv({ cls: "ht-fb-list ht-fb-files" });
+
     input.addEventListener("input", () => {
       this.filter = input.value;
-      this.renderList(list, folder, body);
+      this.renderFiles(right, body);
     });
 
-    this.renderList(list, folder, body);
+    // 展開／收合只要重畫左欄就好，不必連工具列跟篩選框一起重建
+    const redrawTree = () => this.renderTree(left, folder, body, redrawTree);
+    redrawTree();
+    this.renderFiles(right, body);
   }
 
-  private renderList(list: HTMLElement, folder: TFolder, body: HTMLElement) {
+  /**
+   * 左欄：資料夾樹。
+   *
+   * 從樹根（`fileBrowserFolder`，預設是 vault 根目錄）開始往下長，
+   * **有子資料夾的目錄仍然留在左欄**，用箭頭展開、收合 —— 右欄只放檔案。
+   * 點資料夾的名字只是選它（換右欄內容），樹不會跳掉；點箭頭才是展開收合。
+   *
+   * 一律照檔名 A→Z：這一欄是拿來導覽的，順序固定才好找，不跟著右欄的排序跑。
+   */
+  private renderTree(
+    list: HTMLElement,
+    root: TFolder,
+    body: HTMLElement,
+    redraw: () => void
+  ) {
     list.empty();
-    const q = this.filter.trim().toLowerCase();
-    const match = (name: string) => !q || name.toLowerCase().includes(q);
+    const expanded = new Set(this.host.settings.fileBrowserExpanded ?? []);
+    const picked = this.pickedFolder();
 
-    // 資料夾沒有 stat，排不了時間，一律照檔名排，只跟著目前的正／倒序走
-    const dir = this.host.settings.fileBrowserSortAsc ? 1 : -1;
-    const folders = folder.children
+    // 選中的資料夾埋在好幾層底下時（重開 Obsidian、或從 ★ 跳過去），
+    // 把它的每一層祖先都打開，不然畫面上根本看不到自己選的是哪一個
+    for (let p = picked.parent; p && !p.isRoot(); p = p.parent) {
+      if (norm(p.path) === norm(root.path)) break;
+      expanded.add(norm(p.path));
+    }
+
+    this.renderNode(list, root, 0, expanded, norm(picked.path), body, redraw);
+  }
+
+  /** 樹上的一列，以及（展開時）它底下的子資料夾 */
+  private renderNode(
+    list: HTMLElement,
+    folder: TFolder,
+    depth: number,
+    expanded: Set<string>,
+    pickedPath: string,
+    body: HTMLElement,
+    redraw: () => void
+  ) {
+    const path = norm(folder.path);
+    const subs = folder.children
       .filter((c): c is TFolder => c instanceof TFolder)
-      .filter((f) => match(f.name))
-      .sort((a, b) => byName(a, b) * dir);
+      .sort(byName);
+    // 樹根一律是展開的：收起來的話整棵樹就只剩一列，沒有意義
+    const isOpen = depth === 0 || expanded.has(path);
+
+    const row = list.createDiv({ cls: "ht-fb-row ht-fb-folder-row" });
+    // 縮排是真正的動態數值，交給 CSS 變數算，不在程式裡硬寫 padding
+    row.style.setProperty("--ht-fb-depth", String(depth));
+
+    const twist = row.createSpan({ cls: "ht-fb-twist" });
+    if (subs.length > 0) {
+      setIcon(twist, isOpen ? "chevron-down" : "chevron-right");
+      twist.setAttr("aria-label", isOpen ? "收合" : "展開");
+      twist.onclick = (e) => {
+        // 箭頭只管展開收合，不換右欄。整列的點擊是另一回事（見下面的 row.onclick），
+        // 不擋下冒泡的話會兩件事一起做
+        e.stopPropagation();
+        this.toggle(path, redraw);
+      };
+    } else {
+      // 沒有子資料夾也要留出箭頭的位置，名稱才對得齊
+      twist.addClass("ht-fb-twist-empty");
+    }
+
+    setIcon(row.createSpan({ cls: "ht-fb-icon" }), isOpen && subs.length > 0 ? "folder-open" : "folder");
+    row.createSpan({ cls: "ht-fb-name", text: this.folderLabel(folder) });
+    row.setAttr("title", folder.isRoot() ? "vault 根目錄" : folder.path);
+    if (pickedPath === path) row.addClass("ht-fb-picked");
+    // 點整列 = 選它（右欄換成它的檔案）＋ 順手展開收合，不必瞄準那個小箭頭。
+    // 樹根不收合：收起來整棵樹就只剩一列
+    row.onclick = () => this.pick(folder.path, body, subs.length > 0 && depth > 0);
+    if (!folder.isRoot()) {
+      row.addEventListener("contextmenu", (e) => this.showFileMenu(e, folder));
+    }
+
+    if (!isOpen) return;
+    for (const sub of subs) {
+      this.renderNode(list, sub, depth + 1, expanded, pickedPath, body, redraw);
+    }
+  }
+
+  /** 展開／收合樹上的一個資料夾 */
+  private toggle(path: string, redraw: () => void) {
+    const set = new Set(this.host.settings.fileBrowserExpanded ?? []);
+    if (set.has(path)) set.delete(path);
+    else set.add(path);
+    this.host.settings.fileBrowserExpanded = [...set];
+    redraw();
+    this.saveSoon();
+  }
+
+  /**
+   * 右欄：選中那個資料夾裡的**檔案**。
+   *
+   * 子資料夾一律不列在這裡 —— 它們是左欄那棵樹的事。
+   */
+  private renderFiles(list: HTMLElement, body: HTMLElement) {
+    list.empty();
+    const folder = this.pickedFolder();
+    const q = this.filter.trim().toLowerCase();
+
     const files = folder.children
       .filter((c): c is TFile => c instanceof TFile)
       .filter((f) => !this.host.settings.fileBrowserMdOnly || f.extension === "md")
-      .filter((f) => match(f.name))
-      .sort(this.fileComparator());
+      .filter((f) => !q || f.name.toLowerCase().includes(q))
+      .sort(this.fileComparator(folder.path));
 
-    if (folders.length === 0 && files.length === 0) {
+    if (files.length === 0) {
       list.createSpan({
         cls: "ws-cal-hint",
-        text: q ? "沒有符合的項目" : "這個資料夾是空的",
+        text: q ? "沒有符合的檔案" : "這個資料夾沒有檔案",
       });
       return;
-    }
-
-    for (const f of folders) {
-      const row = list.createDiv({ cls: "ht-fb-row ht-fb-folder-row" });
-      setIcon(row.createSpan({ cls: "ht-fb-icon" }), "folder");
-      row.createSpan({ cls: "ht-fb-name", text: f.name });
-      row.setAttr("title", f.path);
-      row.onclick = () => this.goTo(f.path, body);
-      row.addEventListener("contextmenu", (e) => this.showFileMenu(e, f));
     }
 
     for (const f of files) {
@@ -213,16 +339,66 @@ export class FileBrowser {
     return f instanceof TFolder ? f : root;
   }
 
-  private async goTo(path: string, body: HTMLElement) {
-    this.host.settings.fileBrowserFolder = path;
-    this.filter = "";
-    await this.host.save();
-    this.renderBody(body);
+  /** 右欄要顯示哪個資料夾：樹根自己，或樹上被點選的某個後代資料夾 */
+  private pickedFolder(): TFolder {
+    const root = this.currentFolder();
+    const picked = norm(this.host.settings.fileBrowserPicked);
+    if (!picked || picked === norm(root.path)) return root;
+    const f = this.host.app.vault.getAbstractFileByPath(picked);
+    // 必須真的在這棵樹底下：設定裡可能還留著上次換樹根之前選的東西，
+    // 或那個資料夾已經被改名、刪掉了
+    if (f instanceof TFolder && isUnder(f, root)) return f;
+    return root;
   }
 
-  /** 目前排序方式的檔案比較函式 */
-  private fileComparator(): (a: TFile, b: TFile) => number {
-    const { fileBrowserSortKey: key, fileBrowserSortAsc: asc } = this.host.settings;
+  /** 資料夾在畫面上的名字；vault 根目錄沒有 name */
+  private folderLabel(folder: TFolder): string {
+    return folder.isRoot() ? "vault" : folder.name;
+  }
+
+  /** 換一棵樹（麵包屑、回上一層、★ 常用資料夾都走這裡） */
+  private goTo(path: string, body: HTMLElement) {
+    this.host.settings.fileBrowserFolder = path;
+    // 換了樹根，右欄先顯示新樹根自己的檔案
+    this.host.settings.fileBrowserPicked = path;
+    this.filter = "";
+    this.renderBody(body);
+    this.saveSoon();
+  }
+
+  /**
+   * 換右欄要看的資料夾。
+   *
+   * `alsoToggle` 為真時順便展開／收合它 —— 點整列就是這樣進來的，
+   * 使用者不必瞄準前面那個小箭頭（2026-09-18 要求）。
+   */
+  private pick(path: string, body: HTMLElement, alsoToggle = false) {
+    this.host.settings.fileBrowserPicked = path;
+    this.filter = "";
+    if (alsoToggle) {
+      const set = new Set(this.host.settings.fileBrowserExpanded ?? []);
+      const key = norm(path);
+      if (set.has(key)) set.delete(key);
+      else set.add(key);
+      this.host.settings.fileBrowserExpanded = [...set];
+    }
+    this.renderBody(body);
+    this.saveSoon();
+  }
+
+  /** 某個資料夾的排序方式；沒有單獨設定過就用設定裡的預設 */
+  private sortFor(path: string): FileSort {
+    const saved = this.host.settings.fileBrowserSortByFolder?.[norm(path)];
+    if (saved) return saved;
+    return {
+      key: this.host.settings.fileBrowserSortKey,
+      asc: this.host.settings.fileBrowserSortAsc,
+    };
+  }
+
+  /** 某個資料夾目前的檔案比較函式 */
+  private fileComparator(path: string): (a: TFile, b: TFile) => number {
+    const { key, asc } = this.sortFor(path);
     const dir = asc ? 1 : -1;
     if (key === "name") return (a, b) => byName(a, b) * dir;
     const time = (f: TFile) => (key === "ctime" ? f.stat.ctime : f.stat.mtime);
@@ -230,31 +406,65 @@ export class FileBrowser {
     return (a, b) => (time(a) - time(b)) * dir || byName(a, b);
   }
 
-  /** 目前排序方式的說明文字，給按鈕的提示用 */
-  private sortLabel(): string {
-    const { fileBrowserSortKey: key, fileBrowserSortAsc: asc } = this.host.settings;
+  /** 某個資料夾目前排序方式的說明文字，給按鈕的提示用 */
+  private sortLabel(path: string): string {
+    const { key, asc } = this.sortFor(path);
     const hit = SORT_OPTIONS.find((o) => o.key === key && o.asc === asc);
     return (hit ?? SORT_OPTIONS[0]).label;
   }
 
-  private showSortMenu(e: MouseEvent, body: HTMLElement) {
+  /**
+   * 記住某個資料夾的排序。
+   *
+   * 順手清掉已經不存在的資料夾紀錄 —— 不然改名或刪除過的資料夾會一直留在
+   * `data.json` 裡愈積愈多。空字串是 vault 根目錄，永遠留著。
+   */
+  private saveSort(path: string, sort: FileSort) {
+    const map = this.host.settings.fileBrowserSortByFolder ?? {};
+    const next: Record<string, FileSort> = { [norm(path)]: sort };
+    for (const [p, s] of Object.entries(map)) {
+      if (p === norm(path)) continue;
+      if (!p || this.host.app.vault.getAbstractFileByPath(p) instanceof TFolder) next[p] = s;
+    }
+    this.host.settings.fileBrowserSortByFolder = next;
+    this.saveSoon();
+  }
+
+  private showSortMenu(e: MouseEvent, body: HTMLElement, folder: TFolder) {
     const menu = new Menu();
-    const { fileBrowserSortKey: key, fileBrowserSortAsc: asc } = this.host.settings;
+    const path = norm(folder.path);
+    const { key, asc } = this.sortFor(path);
+
+    // 標明這組排序只影響哪個資料夾：每個資料夾各記一份，不講清楚會以為是全域設定
+    menu.addItem((i) => i.setTitle(`「${this.folderLabel(folder)}」的排序`).setDisabled(true));
+
     SORT_OPTIONS.forEach((o, i) => {
       // 換一種依據就畫一條分隔線，三組（檔名／修改／建立）一眼分得開
-      if (i > 0 && o.key !== SORT_OPTIONS[i - 1].key) menu.addSeparator();
+      if (i === 0 || o.key !== SORT_OPTIONS[i - 1].key) menu.addSeparator();
       menu.addItem((it) =>
         it
           .setTitle(o.label)
           .setChecked(o.key === key && o.asc === asc)
-          .onClick(async () => {
-            this.host.settings.fileBrowserSortKey = o.key;
-            this.host.settings.fileBrowserSortAsc = o.asc;
-            await this.host.save();
+          .onClick(() => {
+            this.saveSort(path, { key: o.key, asc: o.asc });
             this.renderBody(body);
           })
       );
     });
+
+    // 沒有這一項的話，設定裡那組預設值就再也改不了了（選單只寫單一資料夾）
+    menu.addSeparator();
+    menu.addItem((i) =>
+      i
+        .setTitle("設為其他資料夾的預設")
+        .setIcon("check-check")
+        .onClick(() => {
+          this.host.settings.fileBrowserSortKey = key;
+          this.host.settings.fileBrowserSortAsc = asc;
+          this.saveSoon();
+          new Notice(`還沒單獨設定過的資料夾，以後都照「${this.sortLabel(path)}」排。`);
+        })
+    );
     menu.showAtMouseEvent(e);
   }
 
@@ -281,11 +491,11 @@ export class FileBrowser {
       i
         .setTitle(isFav ? "從常用移除目前資料夾" : "將目前資料夾加入常用")
         .setIcon(isFav ? "star-off" : "star")
-        .onClick(async () => {
+        .onClick(() => {
           this.host.settings.favoriteFolders = isFav
             ? favs.filter((p) => p !== current)
             : [...favs, current];
-          await this.host.save();
+          this.saveSoon();
         })
     );
     menu.showAtMouseEvent(e);

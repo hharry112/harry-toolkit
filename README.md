@@ -93,20 +93,30 @@ from the 📅 ribbon icon or the **Open publishing calendar** command.
 
 A collapsible section at the bottom of the calendar that lets you browse folders without
 leaving the calendar — a sidebar can only show one tab at a time, and switching to the file
-explorer hides the calendar. **It starts collapsed**, so the calendar looks exactly as it
-did before this feature existed.
+explorer hides the calendar. Like the calendar's other sections it starts expanded; collapse
+it from its heading, or turn the whole section off in settings.
 
-- Browse from the vault root; click a folder to enter, the arrow to go up. Every level of
-  the breadcrumb is clickable
+- **Two columns**: an expandable folder tree on the left, and only the files of whichever
+  folder you picked on the right
+- The tree grows from the vault root, so **folders with subfolders stay in the left column**
+  and the whole structure is visible at a glance
+- **Clicking a folder expands or collapses it** and swaps the right column to its files at
+  the same time — no need to aim for the little chevron (click the chevron itself if you
+  only want to expand without changing the right column). Expanded state is remembered
+  across restarts
+- To narrow the tree to one folder: jump there with the ★ menu, or use the up arrow. Every
+  level of the breadcrumb is clickable
 - ★ is your favourite folders: pick one to jump there, or add the current folder from the
   bottom of the same menu
-- The filter box filters the current level only, live as you type, and clears when you
+- The filter box filters the right column only, live as you type, and clears when you
   change folder
 - The ↑↓ icon sets the sort order: **file name** (A→Z / Z→A), **modified time**
-  (newest / oldest first) or **created date** (newest / oldest first). Your choice is
-  remembered across restarts. Name sorting is numeric-aware, so `20260915` sorts by value.
-  Folders have no timestamps, so they always sort by name (following the chosen direction)
-  and stay above files
+  (newest / oldest first) or **created date** (newest / oldest first). **Each folder
+  remembers its own** — raw material by last modified, finished articles by name — and the
+  choices survive restarts. **Set as the default for other folders** at the bottom of the
+  menu covers every folder you haven't set individually. Name sorting is numeric-aware, so
+  `20260915` sorts by value. The tree always sorts by name A→Z, since that column is for
+  navigation and a stable order is easier to scan
 - Click a file to open it in the current tab; `Ctrl`/`Cmd`-click or middle-click opens it in
   a new tab. `.md` files hide their extension; images, PDFs and others show the full name
 - **Drag any note onto a day cell to schedule it**, exactly like dragging from Drafts.

@@ -163,6 +163,12 @@ export class ScheduleModal extends Modal {
 export class AddTodoModal extends Modal {
   private text = "";
   private date = "";
+  /**
+   * 是不是從月曆的日期格子點進來的。
+   * 是的話到期日已經是那一天了，欄位就不該再標「選填」——
+   * 使用者明明是點著某一天開的，看到「選填」只會懷疑自己那天到底有沒有訂到。
+   */
+  private readonly fromCell: boolean;
 
   constructor(
     app: App,
@@ -173,6 +179,7 @@ export class AddTodoModal extends Modal {
     super(app);
     if (initialDate && isValidDateStr(initialDate)) this.date = initialDate;
     if (initialText) this.text = initialText;
+    this.fromCell = this.date !== "";
   }
 
   onOpen() {
@@ -192,10 +199,14 @@ export class AddTodoModal extends Modal {
       });
     });
 
-    new Setting(contentEl).setName("到期日（選填）").addText((t) => {
-      t.inputEl.type = "date";
-      t.setValue(this.date).onChange((v) => (this.date = v));
-    });
+    const due = new Setting(contentEl)
+      .setName(this.fromCell ? "到期日" : "到期日（選填）")
+      .addText((t) => {
+        t.inputEl.type = "date";
+        t.setValue(this.date).onChange((v) => (this.date = v));
+      });
+    // 從格子進來的已經有日期了，只要說明它可以改；從指令進來的才是真的選填
+    if (this.fromCell) due.setDesc("已帶入你點的那一天。要改成別天，或清空變成沒有到期日，都可以。");
 
     new Setting(contentEl).addButton((b) =>
       b.setButtonText("新增").setCta().onClick(() => this.submit())

@@ -51,6 +51,12 @@ export const CALENDAR_LOCATION_LABEL: Record<CalendarLocation, string> = {
 /** 檔案瀏覽的排序依據 */
 export type FileSortKey = "name" | "mtime" | "ctime";
 
+/** 一個資料夾的排序方式 */
+export interface FileSort {
+  key: FileSortKey;
+  asc: boolean;
+}
+
 export interface SchedulerSettings {
   /** 文章掃描資料夾，空字串 = 整個 vault */
   articleFolder: string;
@@ -62,16 +68,37 @@ export interface SchedulerSettings {
   calendarLocation: CalendarLocation;
   /** 是否在月曆底部顯示「檔案瀏覽」收合區 */
   fileBrowserEnabled: boolean;
-  /** 檔案瀏覽目前停留的資料夾（vault 相對路徑，空字串 = 根目錄） */
+  /** 檔案瀏覽目前停留的資料夾（vault 相對路徑，空字串 = 根目錄），左欄列出它的子資料夾 */
   fileBrowserFolder: string;
+  /**
+   * 左欄樹上目前選中的資料夾（vault 相對路徑），右欄顯示的就是它裡面的檔案。
+   * 等於 `fileBrowserFolder` 代表選的是樹根自己。
+   */
+  fileBrowserPicked: string;
+  /**
+   * 左欄樹上展開中的資料夾路徑。樹根一律展開，不記在這裡。
+   * 選中資料夾的各層祖先會在繪製時自動補上，不必自己維護。
+   */
+  fileBrowserExpanded: string[];
   /** 檔案瀏覽的常用資料夾清單（★ 選單用），空字串代表 vault 根目錄 */
   favoriteFolders: string[];
   /** 檔案瀏覽是否只列出 Markdown 檔 */
   fileBrowserMdOnly: boolean;
-  /** 檔案瀏覽的排序依據：檔名／修改時間／建立日期 */
+  /**
+   * **還沒單獨設定過**的資料夾要用哪種排序：檔名／修改時間／建立日期。
+   * 每個資料夾可以各自記一份（見 `fileBrowserSortByFolder`），這裡只是退路。
+   */
   fileBrowserSortKey: FileSortKey;
-  /** 檔案瀏覽是否正序（檔名 A→Z；時間則是舊→新） */
+  /** 預設是否正序（檔名 A→Z；時間則是舊→新） */
   fileBrowserSortAsc: boolean;
+  /**
+   * 每個資料夾各自的排序方式，key 是資料夾路徑（空字串 = vault 根目錄）。
+   *
+   * 素材資料夾想看最近改過的、文章資料夾想照檔名排 —— 共用一組設定就得一直手動切。
+   * 沒有記錄的資料夾走上面那兩個預設值。資料夾改名或刪除後的殘留紀錄，
+   * 會在下次設定排序時順手清掉（見 `fileBrowser.ts` 的 `saveSort`）。
+   */
+  fileBrowserSortByFolder: Record<string, FileSort>;
 }
 
 export const DEFAULT_SETTINGS: SchedulerSettings = {
@@ -81,10 +108,13 @@ export const DEFAULT_SETTINGS: SchedulerSettings = {
   calendarLocation: "right",
   fileBrowserEnabled: true,
   fileBrowserFolder: "",
+  fileBrowserPicked: "",
+  fileBrowserExpanded: [],
   favoriteFolders: [],
   fileBrowserMdOnly: false,
   fileBrowserSortKey: "name",
   fileBrowserSortAsc: true,
+  fileBrowserSortByFolder: {},
 };
 
 /** 今天的 YYYY-MM-DD（本地時區） */

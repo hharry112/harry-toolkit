@@ -149,22 +149,24 @@ export class ThreadsDashboardView extends ItemView {
       sort.createEl("option", { value: key, text: `依${SORT_LABEL[key]}排序` });
     }
     sort.value = this.ctx.settings.sortKey;
-    sort.addEventListener("change", async () => {
+    // 先重畫再存檔：存檔寫的是 data.json，vault 放在同步資料夾（雲端硬碟）時
+    // 要等好幾秒，等它回來才換清單會讓下拉選單像沒反應
+    sort.addEventListener("change", () => {
       this.ctx.settings.sortKey = sort.value as SortKey;
-      await this.ctx.save();
       this.limit = PAGE_SIZE;
       this.renderList();
+      void this.ctx.save();
     });
 
     const label = bar.createEl("label", { cls: "ht-threads-check" });
     const check = label.createEl("input", { type: "checkbox" });
     check.checked = this.ctx.settings.includeReplies;
     label.createSpan({ text: "含回覆" });
-    check.addEventListener("change", async () => {
+    check.addEventListener("change", () => {
       this.ctx.settings.includeReplies = check.checked;
-      await this.ctx.save();
       this.limit = PAGE_SIZE;
       this.renderList();
+      void this.ctx.save();
     });
   }
 

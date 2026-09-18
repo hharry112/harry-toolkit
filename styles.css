@@ -366,6 +366,26 @@
   max-width: 100%;
   font-size: 0.85em;
 }
+/*
+ * 兩欄：左邊是這一層的資料夾，右邊是選中那個資料夾裡的東西。
+ *
+ * 用 flex-wrap 而不是 media query：月曆常被放在側邊欄，那裡很窄但視窗是寬的，
+ * 靠視窗寬度判斷會判錯。空間不夠時讓兩欄自己疊成上下排。
+ */
+.ht-fb-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: stretch;
+}
+.ht-fb-folders {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+.ht-fb-files {
+  flex: 2 1 190px;
+  min-width: 0;
+}
 /* 高度上限＋內部捲動：資料夾裡檔案再多也不會把整個側邊欄撐長 */
 .ht-fb-list {
   max-height: 320px;
@@ -373,6 +393,40 @@
   border: 1px solid var(--background-modifier-border);
   border-radius: 5px;
   padding: 3px;
+}
+/* 左欄目前選到的那個資料夾：hover 色太淡，要比它更明顯才看得出選的是哪一個 */
+.ht-fb-row.ht-fb-picked,
+.ht-fb-row.ht-fb-picked:hover {
+  background: var(--nav-item-background-active, var(--background-secondary-alt));
+  font-weight: 600;
+}
+/*
+ * 左欄那棵樹的縮排。
+ *
+ * 深度是每一列各自不同的動態數值，所以用 CSS 變數帶進來算，
+ * 而不是在程式裡硬寫 padding（見 AGENTS.md 的樣式規則）。
+ */
+.ht-fb-folders .ht-fb-row {
+  padding-left: calc(5px + var(--ht-fb-depth, 0) * 11px);
+}
+/* 展開／收合的小箭頭。沒有子資料夾時留空位，名稱才對得齊 */
+.ht-fb-twist {
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 13px;
+  color: var(--text-faint);
+  border-radius: 3px;
+}
+.ht-fb-twist:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-border);
+}
+.ht-fb-twist svg {
+  width: 13px;
+  height: 13px;
+}
+.ht-fb-twist-empty {
+  pointer-events: none;
 }
 .ht-fb-row {
   display: flex;

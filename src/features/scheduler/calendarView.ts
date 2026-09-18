@@ -121,7 +121,10 @@ export class CalendarView extends ItemView {
     nav.createEl("span", { cls: "ws-cal-title", text: `${this.year} 年 ${this.month + 1} 月` });
     const next = nav.createEl("span", { cls: "ws-icon-btn", attr: { "aria-label": "下個月" } });
     setIcon(next, "chevron-right");
-    nav.createEl("span", { cls: "ws-cal-hint", text: "點日期新增待辦，拖曳項目可改期" });
+    nav.createEl("span", {
+      cls: "ws-cal-hint",
+      text: "點日期數字開啟日記；點日期格子新增待辦",
+    });
     const todayBtn = nav.createEl("button", { text: "今天", cls: "ws-cal-today-btn" });
 
     prev.onclick = () => this.shiftMonth(-1);
