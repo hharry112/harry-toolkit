@@ -3,10 +3,10 @@
  *
  * 這個功能只讀資料、不發文，也不做任何需要瀏覽器自動化的事
  * （官方 API 沒提供的「單篇帶來多少新追蹤」就是沒有，不要想辦法繞）。
+ *
+ * 只處理**貼文層級**的成效。帳號層級的每日數據（追蹤人數、每日總瀏覽）
+ * 2026-09-18 依使用者要求整個移除了，理由見 AGENTS.md。
  */
-
-/** 帳號層級 insights 的最早可查日期；Meta 規定更早的時間戳一律拒絕 */
-export const EARLIEST_INSIGHT_DATE = "2024-04-13";
 
 /** 面板還沒開啟時要開在哪裡（與 scheduler 的月曆同一套語意） */
 export type PanelLocation = "right" | "left" | "tab" | "window";
@@ -66,18 +66,6 @@ export interface PostRecord {
   metricsAt: string | null;
 }
 
-/** 帳號層級的一天 */
-export interface DayRecord {
-  /** 追蹤人數。只能拿到「當下」的值，補不回來，所以每天要自己記一筆。 */
-  followers: number | null;
-  /** 帳號總瀏覽。API 本身就是每日序列，隨時可以回補。 */
-  views: number | null;
-  likes: number | null;
-  replies: number | null;
-  reposts: number | null;
-  quotes: number | null;
-}
-
 /**
  * 資料檔是屬於哪個帳號的。
  * 第一次寫入時記下來，之後換了權杖要比對 —— 兩個帳號的資料混進同一個檔案，
@@ -95,21 +83,10 @@ export interface PostsFile extends FileOwner {
   posts: PostRecord[];
 }
 
-/** account-daily.json 的內容 */
-export interface AccountFile extends FileOwner {
-  version: number;
-  /** key 是 YYYY-MM-DD */
-  days: Record<string, DayRecord>;
-}
-
 export const DATA_VERSION = 1;
 
 export function emptyPostsFile(): PostsFile {
   return { version: DATA_VERSION, updatedAt: null, posts: [] };
-}
-
-export function emptyAccountFile(): AccountFile {
-  return { version: DATA_VERSION, days: {} };
 }
 
 export interface ThreadsSettings {
@@ -126,10 +103,6 @@ export interface ThreadsSettings {
   recentDays: number;
   /** 面板還沒開時要開在哪 */
   panelLocation: PanelLocation;
-  /** 是否每天自動記一筆帳號數據（追蹤數補不回來，預設開啟） */
-  dailyAuto: boolean;
-  /** 最後一次記錄每日帳號數據的日期 YYYY-MM-DD */
-  lastDailyDate: string;
   /** 最後一次抓貼文的時間（ISO 8601） */
   lastSyncAt: string | null;
   /** 面板上次用的排序依據 */
@@ -152,8 +125,6 @@ export const DEFAULT_SETTINGS: ThreadsSettings = {
   dataFolder: "Threads 數據",
   recentDays: 30,
   panelLocation: "tab",
-  dailyAuto: true,
-  lastDailyDate: "",
   lastSyncAt: null,
   sortKey: "date",
   includeReplies: false,
@@ -184,15 +155,38 @@ export function addDays(s: string, n: number): string {
   return formatDate(d);
 }
 
+/**
+ * 貼文時間戳（ISO 8601）轉成畫面上的「2026/9/17 21:13」。
+ * 時間要看得到：同一天發好幾篇時，只有日期分不出先後。
+ * 解析不出來就原樣顯示，不要吞掉。
+ */
+export function formatPostTime(timestamp: string): string {
+  const d = new Date(timestamp);
+  if (Number.isNaN(d.getTime())) return timestamp;
+  return d.toLocaleString("zh-TW", {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 /** 大數字加千分位；null 顯示成「—」 */
 export function formatCount(n: number | null | undefined): string {
   if (n === null || n === undefined) return "—";
   return n.toLocaleString("zh-TW");
 }
 
-/** 貼文內文縮成一行預覽 */
-export function previewText(text: string, max = 90): string {
+/**
+ * 貼文內文整理成清單上顯示的樣子。
+ *
+ * **不在這裡截斷**：截到幾個字才夠兩行，取決於面板當下有多寬，程式算不準。
+ * 交給 CSS 去夾成兩行（`ht-threads-text` 的 line-clamp），滑鼠移上去再看全文。
+ * 這裡只把換行與連續空白壓成單一空格 —— 原樣的換行會讓兩行額度被幾個字用掉。
+ */
+export function previewText(text: string): string {
   const oneLine = text.replace(/\s+/g, " ").trim();
-  if (!oneLine) return "（無文字內容）";
-  return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+  return oneLine || "（無文字內容）";
 }

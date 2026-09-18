@@ -31,7 +31,10 @@ export class ToolkitSettingTab extends PluginSettingTab {
 			const state = this.host.settings.features[feature.id];
 			if (!state) continue;
 
+			// 每個功能一個明顯的分段標題：設定頁一路往下滾都是灰白的設定列，
+			// 沒有強調的話看不出「這裡換成另一個功能了」（樣式見 styles.css 的 ht-feature-heading）
 			const heading = new Setting(containerEl).setName(feature.name).setHeading();
+			heading.settingEl.addClass("ht-feature-heading");
 			if (feature.description) heading.setDesc(feature.description);
 
 			new Setting(containerEl)

@@ -426,17 +426,6 @@
   font-weight: 600;
   font-size: 1.1em;
 }
-.ht-threads-followers {
-  color: var(--text-muted);
-}
-.ht-threads-up {
-  color: var(--color-green);
-  font-size: 0.85em;
-}
-.ht-threads-down {
-  color: var(--color-red);
-  font-size: 0.85em;
-}
 .ht-threads-sub {
   font-size: 0.8em;
   color: var(--text-faint);
@@ -460,8 +449,12 @@
   font-size: 0.9em;
 }
 
-/* 工具列與進度 */
-.ht-threads-toolbar {
+/*
+ * 動作列：抓取按鈕、搜尋、排序、含回覆全部排在同一列。
+ * 本來是上下兩列，佔掉太多面板高度（貼文清單才是主角）。
+ * 搜尋框吃掉中間剩下的空間，窄螢幕就讓它自己換行。
+ */
+.ht-threads-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -493,42 +486,10 @@
   transition: width 0.2s ease;
 }
 
-/* 追蹤人數走勢 */
-.ht-threads-chart {
-  margin-bottom: 10px;
-}
-.ht-threads-chart-head {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 0.85em;
-  color: var(--text-muted);
-  margin-bottom: 2px;
-}
-.ht-threads-spark {
-  width: 100%;
-  height: 90px;
-  display: block;
-}
-.ht-threads-spark polyline {
-  fill: none;
-  stroke: var(--interactive-accent);
-  stroke-width: 2;
-  vector-effect: non-scaling-stroke;
-}
-
-/* 篩選列 */
-.ht-threads-filter {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-}
+/* 擠在一列上，搜尋框要能縮到很小，剩餘空間才夠排序與「含回覆」用 */
 .ht-threads-search {
-  flex: 1 1 140px;
-  min-width: 120px;
+  flex: 1 1 110px;
+  min-width: 80px;
 }
 .ht-threads-check {
   display: inline-flex;
@@ -557,11 +518,19 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+/*
+ * 貼文內文一律夾成兩行，長貼文才不會把整列撐得比數字欄還高
+ * （清單是拿來比較成效的，不是拿來讀文章的）。
+ * 完整內容靠滑鼠移上去的提示框看，見 dashboardView 的 setTooltip。
+ */
 .ht-threads-text {
   font-size: 0.9em;
   line-height: 1.4;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 .ht-threads-meta {
   display: flex;
@@ -631,4 +600,56 @@
 /* 對話框與設定頁裡要占滿寬度的輸入框（不在程式裡硬寫 style，遵循 Obsidian 插件準則） */
 .ht-wide-input {
   width: 100%;
+}
+
+/*
+ * 功能分段標題。
+ *
+ * 設定頁是好幾個功能接在一起，一路往下滾都是同樣的灰白設定列，
+ * 不特別強調的話看不出「這裡開始換成另一個功能了」。
+ * 用主題的強調色畫一條上緣線、把標題放大加粗，並在區段之間拉開距離。
+ * 顏色全部走 Obsidian 的主題變數，明亮與深色佈景都不會走鐘。
+ */
+.setting-item-heading.ht-feature-heading {
+  margin-top: 34px;
+  padding-top: 16px;
+  padding-bottom: 10px;
+  border-top: 2px solid var(--interactive-accent);
+  /* 新版設定頁的項目是圓角卡片，圓角會把這條線的兩端往上扳彎；
+     明確歸零才畫得出一條真正的直線 */
+  border-radius: 0;
+}
+/*
+ * 第一個功能上面沒有東西，只收掉多餘的間距 —— **分隔線照畫**。
+ * 第一段不畫線的話，它跟後面幾段看起來就不是同一種東西
+ * （使用者 2026-09-18 指出「顯示不一致」，就是這個）。
+ */
+.setting-item-heading.ht-feature-heading:first-child {
+  margin-top: 4px;
+}
+.setting-item-heading.ht-feature-heading .setting-item-name {
+  font-size: 1.4em;
+  font-weight: 700;
+  line-height: 1.3;
+}
+.setting-item-heading.ht-feature-heading .setting-item-description {
+  margin-top: 6px;
+  font-size: 0.9em;
+  line-height: 1.6;
+}
+
+/*
+ * 要貼長字串或路徑的設定項。
+ *
+ * Obsidian 預設把控制項擠在右邊，說明文字一長，左邊的資訊欄就把輸入框壓成一小格
+ * （存取權杖那一項的說明有三行，輸入框窄到看不見自己貼了什麼）。
+ * 改成讓輸入框自己占一行、拉滿寬度。
+ */
+.ht-setting-stacked {
+  display: block;
+}
+.ht-setting-stacked .setting-item-control {
+  width: 100%;
+  justify-content: flex-start;
+  margin-top: 10px;
 }

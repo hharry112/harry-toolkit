@@ -1,24 +1,19 @@
-import { ItemView, Notice, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
 import type { ThreadsContext } from "./context";
 import { confirmBeforeSync } from "./modals";
-import { sortedDays } from "./store";
-import { latestFollowers, metricOf, syncPosts } from "./sync";
+import { metricOf, syncPosts } from "./sync";
 import {
-  AccountFile,
   PostRecord,
   PostsFile,
   SORT_LABEL,
   SortKey,
-  emptyAccountFile,
   emptyPostsFile,
   formatCount,
+  formatPostTime,
   previewText,
 } from "./types";
 
 export const THREADS_VIEW_TYPE = "harry-toolkit-threads";
-
-/** 走勢圖取最近幾天 */
-const CHART_DAYS = 90;
 
 /** 清單一次顯示幾篇，按「顯示更多」再加同樣的量 */
 const PAGE_SIZE = 50;
@@ -32,7 +27,6 @@ const PAGE_SIZE = 50;
  */
 export class ThreadsDashboardView extends ItemView {
   private posts: PostsFile = emptyPostsFile();
-  private account: AccountFile = emptyAccountFile();
   /** 讀檔失敗時的訊息（例如 JSON 壞掉），顯示在畫面上而不是默默當成空的 */
   private loadError: string | null = null;
   private query = "";
@@ -41,7 +35,6 @@ export class ThreadsDashboardView extends ItemView {
 
   private headerEl!: HTMLElement;
   private progressEl!: HTMLElement;
-  private chartEl!: HTMLElement;
   private listEl!: HTMLElement;
   private syncBtn!: HTMLButtonElement;
   private allBtn!: HTMLButtonElement;
@@ -85,11 +78,9 @@ export class ThreadsDashboardView extends ItemView {
     this.loadError = null;
     try {
       this.posts = await this.ctx.store.loadPosts();
-      this.account = await this.ctx.store.loadAccount();
     } catch (e) {
       this.loadError = (e as Error).message;
       this.posts = emptyPostsFile();
-      this.account = emptyAccountFile();
     }
     this.renderAll();
   }
@@ -97,7 +88,6 @@ export class ThreadsDashboardView extends ItemView {
   private renderAll() {
     this.renderHeader();
     this.renderProgress();
-    this.renderChart();
     this.renderList();
   }
 
@@ -111,12 +101,14 @@ export class ThreadsDashboardView extends ItemView {
 
     this.headerEl = root.createDiv({ cls: "ht-threads-header" });
     this.progressEl = root.createDiv({ cls: "ht-threads-progress" });
-    this.buildToolbar(root.createDiv({ cls: "ht-threads-toolbar" }));
-    this.chartEl = root.createDiv({ cls: "ht-threads-chart" });
-    this.buildFilter(root.createDiv({ cls: "ht-threads-filter" }));
+    // 抓取按鈕與搜尋、排序共用一列：面板高度要留給貼文清單
+    const actions = root.createDiv({ cls: "ht-threads-actions" });
+    this.buildToolbar(actions);
+    this.buildFilter(actions);
     this.listEl = root.createDiv({ cls: "ht-threads-list" });
   }
 
+  /** 抓取相關的按鈕。與 buildFilter 共用同一個容器，排成一列 */
   private buildToolbar(bar: HTMLElement) {
     this.syncBtn = bar.createEl("button", { text: "更新最近貼文" });
     this.syncBtn.addEventListener("click", () => this.runSync("recent"));
@@ -137,6 +129,7 @@ export class ThreadsDashboardView extends ItemView {
     refresh.addEventListener("click", () => this.reload());
   }
 
+  /** 搜尋、排序與「含回覆」。接在抓取按鈕後面，同一列 */
   private buildFilter(bar: HTMLElement) {
     const search = bar.createEl("input", {
       type: "text",
@@ -193,23 +186,16 @@ export class ThreadsDashboardView extends ItemView {
     const title = el.createDiv({ cls: "ht-threads-account" });
     title.createSpan({ cls: "ht-threads-username", text: `@${settings.username}` });
 
-    const latest = latestFollowers(this.account);
-    if (latest) {
-      title.createSpan({
-        cls: "ht-threads-followers",
-        text: `追蹤 ${formatCount(latest.value)}`,
-      });
-      const delta = this.followerDelta();
-      if (delta !== null && delta !== 0) {
-        title.createSpan({
-          cls: delta > 0 ? "ht-threads-up" : "ht-threads-down",
-          text: delta > 0 ? `▲ ${formatCount(delta)}` : `▼ ${formatCount(-delta)}`,
-        });
-      }
-    }
+    // 追蹤人數不顯示在這裡：Meta 的 followers_count 更新得又慢又不準，
+    // 擺在面板最上面只會誤導。數字仍然每天記進 account-daily.json（補不回來）。
 
-    const parts: string[] = [];
-    parts.push(`${this.posts.posts.length} 篇貼文`);
+    // 貼文與回覆分開數：兩者抓取成本差很多（回覆通常多好幾倍），
+    // 合成一個總數看不出手上到底有多少主貼文
+    const replies = this.posts.posts.reduce((n, p) => n + (p.isReply ? 1 : 0), 0);
+    const parts: string[] = [
+      `${formatCount(this.posts.posts.length - replies)} 篇貼文`,
+      `${formatCount(replies)} 則回覆`,
+    ];
     if (this.posts.updatedAt) {
       parts.push(`最後更新 ${new Date(this.posts.updatedAt).toLocaleString("zh-TW")}`);
     }
@@ -218,15 +204,6 @@ export class ThreadsDashboardView extends ItemView {
     if (this.loadError) {
       el.createDiv({ cls: "ht-threads-error", text: this.loadError });
     }
-  }
-
-  /** 最後一筆與前一筆有追蹤數的紀錄之間的差 */
-  private followerDelta(): number | null {
-    const days = sortedDays(this.account).filter((d) => typeof d.day.followers === "number");
-    if (days.length < 2) return null;
-    const last = days[days.length - 1].day.followers as number;
-    const prev = days[days.length - 2].day.followers as number;
-    return last - prev;
   }
 
   private renderProgress() {
@@ -255,57 +232,6 @@ export class ThreadsDashboardView extends ItemView {
       const fill = bar.createDiv({ cls: "ht-threads-bar-fill" });
       fill.style.width = `${Math.round((p.current / p.total) * 100)}%`;
     }
-  }
-
-  /**
-   * 追蹤人數走勢。
-   * 只有自己每天記下來的點才畫得出來 —— 這個指標補不回來，中間沒記的日子就是沒有。
-   */
-  private renderChart() {
-    const el = this.chartEl;
-    el.empty();
-    if (!this.ctx.settings.accessToken) return;
-
-    const points = sortedDays(this.account)
-      .filter((d) => typeof d.day.followers === "number")
-      .slice(-CHART_DAYS);
-
-    if (points.length < 2) {
-      el.createDiv({
-        cls: "ht-threads-hint",
-        text: "追蹤人數走勢：資料還不夠。這個數字無法回補，插件每天會自動記一筆，累積兩天以上就會出現曲線。",
-      });
-      return;
-    }
-
-    const values = points.map((p) => p.day.followers as number);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const span = max - min || 1;
-    const w = 600;
-    const h = 90;
-    const step = points.length > 1 ? w / (points.length - 1) : w;
-
-    const coords = values.map((v, i) => {
-      const x = i * step;
-      const y = h - ((v - min) / span) * (h - 10) - 5;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    });
-
-    const head = el.createDiv({ cls: "ht-threads-chart-head" });
-    head.createSpan({ text: "追蹤人數走勢" });
-    head.createSpan({
-      cls: "ht-threads-hint",
-      text: `${points[0].date} → ${points[points.length - 1].date}　最低 ${formatCount(
-        min
-      )}　最高 ${formatCount(max)}`,
-    });
-
-    const svg = el.createSvg("svg", { cls: "ht-threads-spark" });
-    svg.setAttr("viewBox", `0 0 ${w} ${h}`);
-    svg.setAttr("preserveAspectRatio", "none");
-    const line = svg.createSvg("polyline");
-    line.setAttr("points", coords.join(" "));
   }
 
   private visiblePosts(): PostRecord[] {
@@ -368,15 +294,12 @@ export class ThreadsDashboardView extends ItemView {
     }
 
     const main = row.createDiv({ cls: "ht-threads-row-main" });
-    main.createDiv({ cls: "ht-threads-text", text: previewText(post.text) });
+    // 清單上夾成兩行（CSS），滑鼠移上去用 Obsidian 的提示框看完整內容
+    const text = previewText(post.text);
+    setTooltip(main.createDiv({ cls: "ht-threads-text", text }), text);
 
     const meta = main.createDiv({ cls: "ht-threads-meta" });
-    const date = new Date(post.timestamp);
-    meta.createSpan({
-      text: Number.isNaN(date.getTime())
-        ? post.timestamp
-        : date.toLocaleDateString("zh-TW"),
-    });
+    meta.createSpan({ text: formatPostTime(post.timestamp) });
     if (post.isReply) meta.createSpan({ cls: "ht-threads-tag", text: "回覆" });
     if (post.isQuotePost) meta.createSpan({ cls: "ht-threads-tag", text: "引用" });
     if (!post.metricsAt) meta.createSpan({ cls: "ht-threads-tag", text: "未取得成效" });

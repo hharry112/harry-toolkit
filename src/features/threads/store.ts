@@ -1,20 +1,12 @@
 import { App, normalizePath } from "obsidian";
-import {
-  AccountFile,
-  DATA_VERSION,
-  DayRecord,
-  PostRecord,
-  PostsFile,
-  emptyAccountFile,
-  emptyPostsFile,
-} from "./types";
+import { DATA_VERSION, PostRecord, PostsFile, emptyPostsFile } from "./types";
 
 /**
  * 資料檔的讀寫。
  *
  * 檔案放在使用者 vault 裡（不是插件資料夾），理由是這批數字有長期價值：
- * 追蹤人數是時間序列，今天沒記就永遠補不回來，不該跟著插件一起被刪掉。
- * 停用或移除插件後，這兩個 JSON 檔仍然留在 vault 裡。
+ * 抓一次要跑好幾分鐘，不該跟著插件一起被刪掉。
+ * 停用或移除插件後，posts.json 仍然留在 vault 裡。
  *
  * 用 `vault.adapter` 直接讀寫而不是 `vault.create/modify`：這是資料檔不是筆記，
  * 不需要 TFile，也不必驚動 Obsidian 的檔案快取與 vault 事件
@@ -22,7 +14,6 @@ import {
  */
 
 const POSTS_FILE = "posts.json";
-const ACCOUNT_FILE = "account-daily.json";
 
 export class ThreadsStore {
   constructor(private app: App, private folder: () => string) {}
@@ -35,10 +26,6 @@ export class ThreadsStore {
 
   get postsPath(): string {
     return this.path(POSTS_FILE);
-  }
-
-  get accountPath(): string {
-    return this.path(ACCOUNT_FILE);
   }
 
   /** 逐層建立資料夾：使用者可能填 `數據/Threads` 這種多層路徑，中間那層不一定存在 */
@@ -111,22 +98,6 @@ export class ThreadsStore {
     await this.writeJson(this.postsPath, file);
   }
 
-  async loadAccount(): Promise<AccountFile> {
-    const file = await this.readJson<AccountFile>(this.accountPath, emptyAccountFile);
-    // 用展開保留檔案裡我們不認得的欄位（例如舊版存的受眾輪廓、連結點擊）：
-    // 功能拿掉了，但使用者累積的東西不該被下一次存檔悄悄抹掉。
-    return {
-      ...file,
-      version: typeof file.version === "number" ? file.version : DATA_VERSION,
-      days: file.days && typeof file.days === "object" ? file.days : {},
-      accountId: typeof file.accountId === "string" ? file.accountId : undefined,
-      username: typeof file.username === "string" ? file.username : undefined,
-    };
-  }
-
-  async saveAccount(file: AccountFile): Promise<void> {
-    await this.writeJson(this.accountPath, file);
-  }
 }
 
 /**
@@ -162,26 +133,3 @@ export function mergePosts(existing: PostRecord[], incoming: PostRecord[]): Post
   return [...byId.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
-/** 把一天的資料併進去；只覆蓋這次真的有拿到的欄位，不要把既有的值洗成 null */
-export function mergeDay(file: AccountFile, date: string, patch: Partial<DayRecord>): void {
-  const old: DayRecord = file.days[date] ?? {
-    followers: null,
-    views: null,
-    likes: null,
-    replies: null,
-    reposts: null,
-    quotes: null,
-  };
-  const next: DayRecord = { ...old };
-  for (const [key, value] of Object.entries(patch) as [keyof DayRecord, number | null][]) {
-    if (value !== null && value !== undefined) next[key] = value;
-  }
-  file.days[date] = next;
-}
-
-/** 把 days 攤平成依日期排序的陣列，畫圖與列表都用這個 */
-export function sortedDays(file: AccountFile): { date: string; day: DayRecord }[] {
-  return Object.keys(file.days)
-    .sort()
-    .map((date) => ({ date, day: file.days[date] }));
-}

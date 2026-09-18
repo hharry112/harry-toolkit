@@ -18,7 +18,7 @@ feature is fully offline.
 | Feature | What it does |
 | --- | --- |
 | [Scrolling](#scrolling) | Scroll the document with a hotkey while the cursor stays put on screen |
-| [Publishing calendar](#publishing-calendar) | A calendar for scheduling articles, tracking to-dos and getting due reminders |
+| [Publishing calendar](#publishing-calendar) | Scheduling calendar, to-dos, due reminders and a note browser |
 | [Threads analytics](#threads-analytics) | Pull your own post metrics from the official API into a sortable dashboard |
 
 ---
@@ -171,7 +171,7 @@ did before this feature existed.
 ## Threads analytics
 
 Reads your own Threads post metrics through Meta's official API and shows them as a sortable
-dashboard inside Obsidian, plus one follower-count record per day.
+dashboard inside Obsidian. Post-level metrics only.
 
 **Read-only.** This feature has no ability to post, and never will.
 
@@ -199,14 +199,15 @@ does expire, generate a new one and paste it in.
 
 Open it from the bar-chart ribbon icon or the **Open Threads dashboard** command.
 
-- **Account summary** — name, latest follower count, and the change since the previous record
-- **Follower trend** — the last 90 days as a curve
+- **Account summary** — name, separate post and reply counts, and last-updated time
 - **Update recent posts** — fetch metrics for posts from the last N days (30 by default)
 - **Refetch everything** — fetch metrics for every post
 - **Sort and search** — by views, likes, replies, reposts, quotes, shares or publish date,
   with full-text search over post content
 - **Include replies** — off by default. This checkbox only controls *display*; replies have
   to be fetched first (see below)
+- Each row shows its text preview and publish time down to the minute (e.g. `2026/9/17 21:13`).
+  The text is clamped to two lines; hover it to see the whole post
 - Each row shows six numbers — views, likes, replies, reposts, quotes, shares — with the
   current sort column highlighted. Click a row to open the post in your browser
 
@@ -245,8 +246,7 @@ account, you get a warning before fetching, because mixing two accounts' posts i
 makes the rankings meaningless. To track both, point the **data folder** setting somewhere
 else, or move the existing `posts.json` aside.
 
-To start over, delete `posts.json` and fetch again. **Don't delete `account-daily.json`** —
-those follower counts can't be recovered.
+To start over, delete `posts.json` and fetch again — post metrics can always be refetched.
 
 ### Fetching your replies
 
@@ -264,31 +264,13 @@ Replies usually far outnumber posts, so fetching takes noticeably longer — hen
 for reply-type posts regardless of reality, so the number is meaningless. Views, likes,
 reposts and quotes are all reported normally.
 
-### Daily recording matters
-
-Follower counts are only available as a *current* number — **the API offers no history, so a
-day not recorded is lost forever**. The plugin therefore records one data point after load
-(once per day, two API calls, under a second, and a failure never affects anything else). As
-long as you open Obsidian regularly, the curve builds itself.
-
-| Metric | Recoverable? |
-| --- | --- |
-| Follower count | ❌ No — only daily recording works |
-| Account daily views | ✅ Backfillable to 2024-04-13 (**Backfill daily views** command) |
-| Account daily likes, replies, reposts, quotes | Accumulates from first use |
-| Per-post metrics | ✅ Always current on refetch |
-
-Meta notes that figures from before 2024-06-01 are not guaranteed accurate.
-
 ### Data files
 
-Two JSON files in the folder you choose (`Threads 數據` by default):
+One JSON file in the folder you choose (`Threads 數據` by default): `posts.json`, holding
+post content and their latest metrics.
 
-- `posts.json` — post content and latest metrics
-- `account-daily.json` — one record per day of account-level numbers
-
-**They live in your vault, not in the plugin folder**, so they survive uninstalling the
-plugin and travel with your backups. Both are ordinary JSON you can read or feed to other tools.
+**It lives in your vault, not in the plugin folder**, so it survives uninstalling the
+plugin and travels with your backups. It is ordinary JSON you can read or feed to other tools.
 
 ### What this feature can't give you
 
@@ -303,10 +285,9 @@ plugin and travel with your backups. Both are ordinary JSON you can read or feed
 
 - **Access token** — see above
 - **Test connection** — verifies the token and records the account id
-- **Data folder** — where the JSON files go (empty means the vault root)
+- **Data folder** — where the JSON file goes (empty means the vault root)
 - **Days for "Update recent posts"** — default 30
 - **Also fetch my replies** — off by default; needs `threads_read_replies`
-- **Record account data daily** — on by default; leaving it on is strongly recommended
 - **Dashboard location** — where to open the dashboard when it isn't open yet
 
 ---

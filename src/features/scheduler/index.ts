@@ -110,7 +110,9 @@ function openNoteTodoModal(ctx: SchedulerContext, file: TFile) {
 export const schedulerFeature: Feature<SchedulerSettings> = {
   id: "scheduler",
   name: "文章發佈排程與待辦",
-  description: "發佈月曆、文章排程 frontmatter、Todo 檔與到期提醒。",
+  description:
+    "用月曆安排文章的發佈日期、管理待辦事項，到期與逾期都會主動提醒；" +
+    "月曆下方還可以直接瀏覽並開啟你常用資料夾裡的筆記。",
   defaults: DEFAULT_SETTINGS,
 
   onload(fctx: FeatureContext<SchedulerSettings>) {

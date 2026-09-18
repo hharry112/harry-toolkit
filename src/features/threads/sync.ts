@@ -1,14 +1,6 @@
-import { ThreadsApi, ThreadsApiError, readDailySeries, readMetricMap } from "./api";
-import { ThreadsStore, mergeDay, mergePosts } from "./store";
-import {
-  AccountFile,
-  EARLIEST_INSIGHT_DATE,
-  PostRecord,
-  ThreadsSettings,
-  addDays,
-  parseDate,
-  todayStr,
-} from "./types";
+import { ThreadsApi, ThreadsApiError } from "./api";
+import { ThreadsStore, mergePosts } from "./store";
+import { PostRecord, ThreadsSettings, addDays, parseDate, todayStr } from "./types";
 
 /**
  * 抓取流程。
@@ -23,9 +15,6 @@ const PER_POST_DELAY = 180;
 
 /** 撞到頻率上限時先等這麼久再重試一次 */
 const RATE_LIMIT_WAIT = 5000;
-
-/** 回補歷史時一次問多長的區間；文件沒寫上限，分段純粹是保險 */
-const BACKFILL_CHUNK_DAYS = 90;
 
 export interface SyncProgress {
   /** 給使用者看的一句話 */
@@ -151,114 +140,6 @@ async function fetchInsightsWithRetry(api: ThreadsApi, postId: string) {
   }
 }
 
-/**
- * 記錄「今天」的帳號數據。
- *
- * 追蹤人數（followers_count）不吃 since／until，只拿得到當下的值，
- * **沒記就永遠補不回來**，所以這件事要每天做、而且要跟耗時的貼文抓取分開。
- * 它只有兩次 API 呼叫，不到一秒。
- *
- * followers_count 與其他指標分兩次問：它不支援時間區間，混在同一個請求裡會整包失敗。
- */
-export async function recordToday(
-  api: ThreadsApi,
-  store: ThreadsStore,
-  settings: ThreadsSettings
-): Promise<void> {
-  const today = todayStr();
-  const file = await store.loadAccount();
-
-  let followers: number | null = null;
-  try {
-    followers = await api.getFollowersCount(settings.userId);
-  } catch {
-    // 追蹤數拿不到就算了，下面的區間數據還是值得記
-  }
-
-  let daily: Record<string, number | null> = {};
-  try {
-    const json = await api.getAccountInsights(
-      settings.userId,
-      ["views", "likes", "replies", "reposts", "quotes"],
-      parseDate(today),
-      new Date()
-    );
-    // views 回的是每日序列，按它自己的 end_time 歸到對應的那一天
-    // （Meta 的日界不是本地午夜，硬塞進「今天」會把跨日的量算錯）
-    for (const point of readDailySeries(json, "views")) {
-      mergeDay(file, point.date, { views: point.value });
-    }
-    // 其餘指標回的是整段區間的總和，就是今天到目前為止的累計
-    daily = readMetricMap(json);
-  } catch {
-    daily = {};
-  }
-
-  mergeDay(file, today, {
-    followers,
-    likes: daily.likes ?? null,
-    replies: daily.replies ?? null,
-    reposts: daily.reposts ?? null,
-    quotes: daily.quotes ?? null,
-  });
-  file.accountId = settings.userId;
-  file.username = settings.username;
-  await store.saveAccount(file);
-}
-
-/**
- * 回補帳號每日瀏覽數。
- *
- * `views` 是唯一一個本來就以「每日序列」回傳的帳號指標，所以中斷多久都補得回來，
- * 一次呼叫就能拿一整段。讚、回覆這些是區間總和，要逐日問才有每日值（一年就是
- * 365 次呼叫），價值不高，這裡不做 —— 它們從開始使用的那天起每天記一筆。
- *
- * 追蹤人數則是怎麼樣都補不回來的，只能靠 recordToday 每天累積。
- */
-export async function backfillViews(
-  api: ThreadsApi,
-  store: ThreadsStore,
-  settings: ThreadsSettings,
-  handle: SyncHandle
-): Promise<number> {
-  const file = await store.loadAccount();
-  const today = todayStr();
-  const start = EARLIEST_INSIGHT_DATE;
-
-  let filled = 0;
-  let cursor = start;
-  while (cursor <= today) {
-    if (handle.cancelled()) break;
-    const chunkEnd = minDate(addDays(cursor, BACKFILL_CHUNK_DAYS), today);
-    handle.onProgress({ message: `正在回補 ${cursor} 至 ${chunkEnd} 的瀏覽數…` });
-    try {
-      const json = await api.getAccountInsights(
-        settings.userId,
-        ["views"],
-        parseDate(cursor),
-        // until 用當天的 23:59:59，避免最後一天被切掉
-        new Date(parseDate(chunkEnd).getTime() + 86399000)
-      );
-      for (const point of readDailySeries(json, "views")) {
-        mergeDay(file, point.date, { views: point.value });
-        filled++;
-      }
-    } catch (e) {
-      // 整段失敗就跳過這一段繼續下一段：早期資料 Meta 本來就標示「不保證正確」
-      console.warn("[harry-toolkit] 回補瀏覽數失敗", cursor, chunkEnd, e);
-    }
-    if (chunkEnd === today) break;
-    cursor = addDays(chunkEnd, 1);
-  }
-
-  await store.saveAccount(file);
-  return filled;
-}
-
-function minDate(a: string, b: string): string {
-  return a < b ? a : b;
-}
-
 /** 依排序鍵取出一篇貼文的數字，排序與顯示共用 */
 export function metricOf(post: PostRecord, key: string): number {
   if (key === "date") return new Date(post.timestamp).getTime() || 0;
@@ -267,14 +148,4 @@ export function metricOf(post: PostRecord, key: string): number {
   if (key === "replies" && post.isReply) return -1;
   const value = (post.metrics as unknown as Record<string, number | null>)[key];
   return value ?? -1;
-}
-
-/** 帳號檔裡最後一天有追蹤數的紀錄 */
-export function latestFollowers(file: AccountFile): { date: string; value: number } | null {
-  const dates = Object.keys(file.days).sort();
-  for (let i = dates.length - 1; i >= 0; i--) {
-    const value = file.days[dates[i]]?.followers;
-    if (typeof value === "number") return { date: dates[i], value };
-  }
-  return null;
 }

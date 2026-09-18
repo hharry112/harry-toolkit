@@ -72,7 +72,10 @@ function scroll(editor: Editor, direction: 1 | -1, settings: ScrollSettings) {
 export const scrollFeature: Feature<ScrollSettings> = {
 	id: "scroll",
 	name: "捲動",
-	description: "用快捷鍵捲動內容，游標固定停在畫面上的同一個位置。",
+	description:
+		"用快捷鍵上下捲動畫面時，游標會留在畫面上原來的位置，不會跟著內容跑掉——" +
+		"一邊往下讀一邊改字，不必每次捲完再把游標移回來。" +
+		"使用前請先到「設定 → 快捷鍵」搜尋「Harry Toolkit」，為兩個捲動指令各指定一組按鍵。",
 	defaults: {
 		lines: 1,
 		smooth: false,

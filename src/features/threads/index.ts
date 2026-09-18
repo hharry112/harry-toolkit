@@ -5,24 +5,23 @@ import type { ThreadsContext } from "./context";
 import { THREADS_VIEW_TYPE, ThreadsDashboardView } from "./dashboardView";
 import { confirmBeforeSync } from "./modals";
 import { ThreadsStore } from "./store";
-import { backfillViews, recordToday, syncPosts } from "./sync";
+import { syncPosts } from "./sync";
 import {
   DEFAULT_SETTINGS,
   PANEL_LOCATION_LABEL,
   PanelLocation,
   ThreadsSettings,
-  todayStr,
 } from "./types";
 import type { Feature, FeatureContext } from "../../core/feature";
 
 /** 權杖剩不到這麼多天就試著自動延長（Meta 的長效權杖是 60 天） */
 const REFRESH_WHEN_DAYS_LEFT = 10;
 
-/** 插件啟動後隔多久才做每日記錄，避免跟 Obsidian 啟動搶資源 */
+/** 插件啟動後隔多久才檢查權杖，避免跟 Obsidian 啟動搶資源 */
 const STARTUP_DELAY = 8000;
 
-/** 每隔多久檢查一次「今天記過了沒」；Obsidian 一開就是好幾天不關的情況很常見 */
-const CHECK_INTERVAL = 6 * 60 * 60 * 1000;
+/** 每隔多久檢查一次權杖到期；Obsidian 一開就是好幾天不關的情況很常見 */
+const TOKEN_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 
 function newPanelLeaf(app: App, location: PanelLocation): WorkspaceLeaf | null {
   switch (location) {
@@ -65,38 +64,6 @@ async function refreshPanels(app: App): Promise<void> {
   }
 }
 
-/**
- * 每日例行工作：記一筆帳號數據，順便看要不要延長權杖。
- *
- * 追蹤人數（followers_count）不支援查歷史，**今天沒記就永遠補不回來**，
- * 所以這件事跟耗時幾分鐘的貼文抓取完全分開：它只有兩次 API 呼叫、不到一秒，
- * 插件載入時自動做，使用者不必記得按任何按鈕。
- *
- * 整段包在 try/catch：沒網路、權杖過期都只是今天少一筆，絕不能影響插件其他功能。
- */
-async function runDailyRoutine(ctx: ThreadsContext, force = false): Promise<void> {
-  const settings = ctx.settings;
-  if (!settings.accessToken || !settings.userId) return;
-  if (!force && !settings.dailyAuto) return;
-  const today = todayStr();
-  if (!force && settings.lastDailyDate === today) return;
-
-  const api = ctx.api();
-  if (!api) return;
-
-  try {
-    await recordToday(api, ctx.store, settings);
-    settings.lastDailyDate = today;
-    await ctx.save();
-    await refreshPanels(ctx.app);
-  } catch (e) {
-    console.warn("[harry-toolkit] Threads 每日記錄失敗", e);
-    return;
-  }
-
-  await maybeRefreshToken(ctx);
-}
-
 /** 權杖快到期就試著延長；Meta 規定要建立滿 24 小時才能刷新，失敗是正常的 */
 async function maybeRefreshToken(ctx: ThreadsContext): Promise<void> {
   const settings = ctx.settings;
@@ -121,7 +88,8 @@ export const threadsFeature: Feature<ThreadsSettings> = {
   id: "threads",
   name: "Threads 數據",
   description:
-    "用官方 API 抓自己帳號的貼文成效，做成排行榜面板；每天自動記一筆追蹤人數。只讀取，不發文。",
+    "用官方 API 抓自己帳號的貼文成效，做成可依瀏覽、讚、回覆等指標排序的排行榜面板，" +
+    "也可以搜尋貼文內容。只讀取，不發文。",
   defaults: DEFAULT_SETTINGS,
 
   onload(fctx: FeatureContext<ThreadsSettings>) {
@@ -161,58 +129,18 @@ export const threadsFeature: Feature<ThreadsSettings> = {
       callback: () => runSyncCommand(ctx, "all"),
     });
 
-    plugin.addCommand({
-      id: "threads-record-today",
-      name: "Threads：立刻記錄今天的帳號數據",
-      callback: async () => {
-        const api = ctx.api();
-        if (!api) {
-          new Notice("尚未設定 Threads 權杖。");
-          return;
-        }
-        try {
-          await runDailyRoutine(ctx, true);
-          new Notice("已記錄今天的帳號數據。");
-        } catch (e) {
-          new Notice(`記錄失敗：${(e as Error).message}`);
-        }
-      },
-    });
-
-    plugin.addCommand({
-      id: "threads-backfill-views",
-      name: "Threads：回補每日瀏覽數（可補到 2024-04-13）",
-      callback: async () => {
-        const api = ctx.api();
-        if (!api) {
-          new Notice("尚未設定 Threads 權杖。");
-          return;
-        }
-        try {
-          const outcome = await runner.run(async (handle) => {
-            return await backfillViews(api, store, fctx.settings, handle);
-          });
-          if (!outcome.ok) {
-            new Notice("已經有一項抓取在進行中。");
-            return;
-          }
-          new Notice(`已回補 ${outcome.result ?? 0} 天的瀏覽數。`);
-        } catch (e) {
-          new Notice(`回補失敗：${(e as Error).message}`, 12000);
-        }
-      },
-    });
-
-    // 啟動後隔一段時間再做每日記錄，不跟 Obsidian 的啟動搶資源；
-    // 之後每 6 小時檢查一次，Obsidian 連開好幾天也不會漏掉跨日。
+    // 權杖是 60 天長效的，**過期就要人工回 Meta 後台重新產生**，所以自動延長
+    // 一定要有人定期觸發。以前它搭在每日記錄流程上，那個流程拿掉之後改成自己排程：
+    // 啟動後隔一段時間檢查一次（不跟 Obsidian 的啟動搶資源），之後每 6 小時再看一次，
+    // Obsidian 連開好幾天也不會錯過到期前的那段時間。
     const startup = window.setTimeout(() => {
-      void runDailyRoutine(ctx);
+      void maybeRefreshToken(ctx);
     }, STARTUP_DELAY);
     plugin.register(() => window.clearTimeout(startup));
     plugin.registerInterval(
       window.setInterval(() => {
-        void runDailyRoutine(ctx);
-      }, CHECK_INTERVAL)
+        void maybeRefreshToken(ctx);
+      }, TOKEN_CHECK_INTERVAL)
     );
   },
 
@@ -232,9 +160,6 @@ export const threadsFeature: Feature<ThreadsSettings> = {
           (new Date(ctx.settings.tokenExpiresAt).getTime() - Date.now()) / 86400000
         );
         parts.push(Number.isNaN(left) ? "" : `權杖約 ${left} 天後到期`);
-      }
-      if (ctx.settings.lastDailyDate) {
-        parts.push(`帳號數據最後記錄於 ${ctx.settings.lastDailyDate}`);
       }
       status.createSpan({ text: parts.filter(Boolean).join("　·　") });
     };
@@ -257,7 +182,9 @@ export const threadsFeature: Feature<ThreadsSettings> = {
             ctx.settings.accessToken = value.trim();
             await ctx.save();
           });
-      });
+      })
+      // 權杖是一長串亂碼，說明又有三行；不放成獨立一行的話輸入框只剩一小格
+      .then((setting) => setting.settingEl.addClass("ht-setting-stacked"));
 
     new Setting(containerEl)
       .setName("測試連線")
@@ -297,17 +224,20 @@ export const threadsFeature: Feature<ThreadsSettings> = {
       .setName("資料資料夾")
       .setDesc(
         `抓回來的數據存成 JSON 放在這個資料夾（vault 相對路徑，留空 = vault 根目錄）。` +
-          `目前是 ${store.postsPath} 與 ${store.accountPath}。移除插件後檔案仍會留著。`
+          `目前是 ${store.postsPath}。移除插件後檔案仍會留著。`
       )
-      .addText((text) =>
+      .addText((text) => {
+        text.inputEl.addClass("ht-wide-input");
         text
           .setPlaceholder("Threads 數據")
           .setValue(ctx.settings.dataFolder)
           .onChange(async (value) => {
             ctx.settings.dataFolder = value.trim();
             await ctx.save();
-          })
-      );
+          });
+      })
+      // 跟權杖那一項同寬，兩個輸入框並排看起來才整齊
+      .then((setting) => setting.settingEl.addClass("ht-setting-stacked"));
 
     new Setting(containerEl)
       .setName("「更新最近貼文」的天數")
@@ -332,18 +262,6 @@ export const threadsFeature: Feature<ThreadsSettings> = {
       .addToggle((toggle) =>
         toggle.setValue(ctx.settings.fetchReplies).onChange(async (value) => {
           ctx.settings.fetchReplies = value;
-          await ctx.save();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("每天自動記錄帳號數據")
-      .setDesc(
-        "追蹤人數只能拿到「當下」的值，沒記就永遠補不回來。開啟後插件會在載入時自動記一筆（只有兩次 API 呼叫）。"
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(ctx.settings.dailyAuto).onChange(async (value) => {
-          ctx.settings.dailyAuto = value;
           await ctx.save();
         })
       );

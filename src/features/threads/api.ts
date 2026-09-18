@@ -63,12 +63,6 @@ function friendlyMessage(status: number, code: number | undefined, raw: string):
   return raw;
 }
 
-export interface DayValue {
-  /** YYYY-MM-DD（由 API 回傳的 end_time 轉成本地日期） */
-  date: string;
-  value: number;
-}
-
 export interface Profile {
   id: string;
   username: string;
@@ -306,30 +300,19 @@ export class ThreadsApi {
   }
 
   /**
-   * 帳號層級的區間數據。
-   * `views` 回的是每日序列，其餘（讚、回覆、轉發、引用）是整段區間的總和。
+   * 目前的追蹤人數。這個指標不吃 since／until，只拿得到「現在」。
+   *
+   * 這是整支封裝裡**唯一**的帳號層級呼叫，而且只有「測試連線」在用：
+   * 它問的是 threads_insights，所以順便證明了權杖真的有 threads_manage_insights
+   * 權限（只打 `me` 是驗不出來的，那支不需要 insights 權限）。
+   * 每日帳號數據的記錄 2026-09-18 已整個移除，不要以為還有別人在用這個數字。
    */
-  async getAccountInsights(
-    userId: string,
-    metrics: string[],
-    since?: Date,
-    until?: Date
-  ): Promise<any> {
-    return this.get(
-      this.url(`${encodeURIComponent(userId)}/threads_insights`, {
-        metric: metrics.join(","),
-        since: since ? String(Math.floor(since.getTime() / 1000)) : undefined,
-        until: until ? String(Math.floor(until.getTime() / 1000)) : undefined,
-      })
-    );
-  }
-
-  /** 目前的追蹤人數。這個指標不吃 since／until，只拿得到「現在」。 */
   async getFollowersCount(userId: string): Promise<number | null> {
-    const json = await this.getAccountInsights(userId, ["followers_count"]);
+    const json = await this.get(
+      this.url(`${encodeURIComponent(userId)}/threads_insights`, { metric: "followers_count" })
+    );
     return readMetricMap(json).followers_count ?? null;
   }
-
 }
 
 /** 把 `>= 0` 的整數挑出來；型別不對或負數一律視為沒有值 */
@@ -343,7 +326,7 @@ function toCount(raw: unknown): number | null {
  * 從 insights 回應裡讀出「一個指標一個數字」。
  *
  * 同一支端點有兩種格式：帳號層級的總和放在 `total_value.value`，
- * 單篇成效與每日序列放在 `values[]`。先看 total_value 再看 values，
+ * 單篇成效放在 `values[]`。先看 total_value 再看 values，
  * 兩種都要吃（這是 threads-analyzer 實測出來的順序）。
  */
 function readMetricMap(json: any): Record<string, number | null> {
@@ -373,25 +356,3 @@ function readMetricMap(json: any): Record<string, number | null> {
   return out;
 }
 
-/** 從 insights 回應裡讀出某個指標的每日序列（目前只有 views 是這種格式） */
-export function readDailySeries(json: any, name: string): DayValue[] {
-  const data = Array.isArray(json?.data) ? json.data : [];
-  const metric = data.find((m: any) => m?.name === name);
-  const values = Array.isArray(metric?.values) ? metric.values : [];
-  const out: DayValue[] = [];
-  for (const v of values) {
-    const n = toCount(v?.value);
-    const endTime = typeof v?.end_time === "string" ? v.end_time : "";
-    if (n === null || !endTime) continue;
-    const d = new Date(endTime);
-    if (Number.isNaN(d.getTime())) continue;
-    // end_time 是該統計日的結束時刻，換算成本地日期字串
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    out.push({ date: `${y}-${m}-${day}`, value: n });
-  }
-  return out;
-}
-
-export { readMetricMap };
