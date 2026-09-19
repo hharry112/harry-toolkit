@@ -128,13 +128,6 @@
   background: rgba(var(--color-purple-rgb), 0.18);
   color: var(--color-purple);
 }
-/* 草稿：刻意用中性灰而不是第五種顏色。一來「還沒排程」本來就該低調，
-   二來剩下的色相（黃）在淺色主題下小字對比太差。 */
-.ws-ev-draft {
-  background: var(--background-modifier-hover);
-  color: var(--text-muted);
-  box-shadow: inset 0 0 0 1px var(--background-modifier-border);
-}
 .ws-ev-remove,
 .ws-ev-edit,
 .ws-ev-publish {
@@ -205,56 +198,20 @@
   color: var(--text-accent);
 }
 
-/* 底部收合區的總開關（全部展開／全部收合） */
-.ws-sec-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 12px;
-}
-/* 緊接在下面的第一個收合區不用再撐一次間距 */
-.ws-sec-bar + details {
-  margin-top: 4px;
-}
-.ws-sec-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 0.78em;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 1px 6px;
-  border-radius: 4px;
-}
-.ws-sec-btn:hover {
-  color: var(--text-normal);
-  background: var(--background-modifier-hover);
-}
-.ws-sec-icon {
-  display: inline-flex;
-}
-.ws-sec-icon svg {
-  width: 12px;
-  height: 12px;
-}
-
-/* 未排定待辦、已排定事項、草稿（共用收合區樣式） */
+/* 未排定待辦、已排定事項（共用收合區樣式） */
 .ws-unscheduled,
-.ws-scheduled,
-.ws-drafts {
+.ws-scheduled {
   margin-top: 12px;
 }
 .ws-unscheduled summary,
-.ws-scheduled summary,
-.ws-drafts summary {
+.ws-scheduled summary {
   cursor: pointer;
   color: var(--text-muted);
   font-size: 0.85em;
   margin-bottom: 4px;
 }
 .ws-unscheduled .ws-cal-event,
-.ws-scheduled .ws-cal-event,
-.ws-drafts .ws-cal-event {
+.ws-scheduled .ws-cal-event {
   display: inline-flex;
   max-width: 260px;
   margin-right: 4px;
@@ -275,6 +232,8 @@
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
   width: 9em;
+  /* 日期是一個不可拆的單位，欄位再窄也不准折成兩行 */
+  white-space: nowrap;
 }
 .ws-sch-row .ws-cal-event {
   margin-bottom: 0;
@@ -290,7 +249,7 @@
   max-width: 100%;
 }
 
-/* ===== 檔案瀏覽（月曆底部的第五個收合區） ===== */
+/* ===== 檔案瀏覽（月曆底部最後一個收合區） ===== */
 .ht-fb {
   margin-top: 12px;
 }
@@ -300,8 +259,14 @@
   font-size: 0.85em;
   margin-bottom: 4px;
 }
+/*
+ * 篩選框跟排序、★ 併成同一列：側邊欄的垂直空間要留給月曆。
+ * 但排序按鈕帶著文字，欄位很窄時擠不下 —— 用 flex-wrap 讓兩顆按鈕自己掉到下一行，
+ * 不要讓篩選框被壓成看不見的一小格（理由同兩欄版面，不能靠視窗寬度判斷）。
+ */
 .ht-fb-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   margin-bottom: 4px;
@@ -310,11 +275,25 @@
 .ht-fb-sort {
   flex-shrink: 0;
 }
-/* 篩選框跟排序、★ 同一列：側邊欄的垂直空間要留給月曆 */
 .ht-fb-filter {
-  flex: 1;
+  flex: 1 1 120px;
   min-width: 0;
   font-size: 0.85em;
+}
+/* 排序按鈕＝圖示＋現在的排序方式，不點開選單也知道右欄是怎麼排的 */
+.ht-fb-sort {
+  gap: 3px;
+}
+.ht-fb-sort-icon {
+  display: inline-flex;
+}
+.ht-fb-sort-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.ht-fb-sort-label {
+  font-size: 0.78em;
+  white-space: nowrap;
 }
 /*
  * 兩欄：左邊是這一層的資料夾，右邊是選中那個資料夾裡的東西。
@@ -408,18 +387,48 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 篩選撈到子資料夾裡的檔案時，右邊那一小段相對位置 */
+.ht-fb-sub {
+  margin-left: auto;
+  padding-left: 4px;
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.85em;
+  color: var(--text-faint);
+}
 .ht-fb-row[draggable="true"]:active {
   cursor: grabbing;
 }
-/* 樹最上面的「釘選筆記」：橘色圖示與一條底線，跟底下真正的資料夾分開 */
-.ht-fb-pinned-row .ht-fb-icon {
-  color: var(--color-orange);
-}
-.ht-fb-pinned-row {
+/*
+ * 樹最上面那幾列虛擬清單（釘選筆記／草稿／已排定事項）：
+ * 橘色圖示標示「不是真的資料夾」，整組下面畫一條線跟底下的資料夾分開。
+ */
+.ht-fb-virtual {
   border-bottom: 1px solid var(--background-modifier-border);
-  border-radius: 0;
   margin-bottom: 2px;
   padding-bottom: 3px;
+}
+.ht-fb-virtual-row .ht-fb-icon {
+  color: var(--color-orange);
+}
+/* 已排定事項在右欄的樣子：欄位很窄，日期收成一小格，事項本身占滿剩下的寬度 */
+.ht-fb-sch .ws-sch-row {
+  margin-bottom: 2px;
+  gap: 4px;
+}
+/*
+ * 右欄的日期省了年份，固定寬度反而會把「09-19（六）」擠成兩行。
+ * 交給內容自己撐（格式都一樣長，仍然對得齊），flex-shrink: 0 保證它不被壓縮。
+ */
+.ht-fb-sch .ws-sch-date {
+  width: auto;
+}
+.ht-fb-sch .ws-cal-event {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
 }
 /* 清單很擠，「移除釘選」平常隱藏，滑過那一列才出現 */
 .ht-fb-unpin {

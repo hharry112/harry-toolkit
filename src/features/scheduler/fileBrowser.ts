@@ -1,5 +1,5 @@
 import { App, Keymap, Menu, Notice, TFile, TFolder, setIcon } from "obsidian";
-import { scanPinnedNotes, setPinned } from "./articles";
+import { scanArticles, scanPinnedNotes, setPinned } from "./articles";
 import { ConfirmModal, RenameModal } from "./modals";
 import type { FileSort, FileSortKey, SchedulerSettings } from "./types";
 
@@ -7,11 +7,26 @@ import type { FileSort, FileSortKey, SchedulerSettings } from "./types";
 const norm = (path: string) => (path === "/" ? "" : path);
 
 /**
- * 「釘選筆記」在樹上是一列虛擬資料夾，選中時右欄改列全 vault 的釘選筆記。
- * 用冒號開頭是為了跟真實路徑錯開（vault 路徑不可能長這樣），
- * 它會被存進 `fileBrowserPicked`，也可以像資料夾一樣各記一份排序。
+ * 左欄樹最上面那幾列「虛擬清單」的識別字串。
+ *
+ * 它們不是真的資料夾，但會被存進 `fileBrowserPicked`，也像資料夾一樣各記一份排序，
+ * 所以一律用冒號包起來跟真實路徑錯開（vault 路徑不可能長這樣）。
  */
 const PINNED_KEY = ":pinned:";
+const DRAFTS_KEY = ":drafts:";
+/** 「已排定事項」的內容由宿主（月曆）提供，key 定在這裡讓兩邊對得上 */
+export const SCHEDULED_KEY = ":scheduled:";
+
+/** 這個 key 是虛擬清單，不是資料夾路徑（清理孤兒排序紀錄時要放過它們） */
+const isVirtualKey = (key: string) => key.startsWith(":");
+
+/**
+ * 虛擬清單的預設排序（沒有單獨設定過時用）。
+ * 草稿照「最近改過的排前面」，跟月曆底部草稿區的順序一致，正在寫的會浮上來。
+ */
+const VIEW_SORT: Record<string, FileSort> = {
+  [DRAFTS_KEY]: { key: "mtime", asc: false },
+};
 
 /** 圖片類副檔名，只影響清單上的小圖示 */
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"]);
@@ -23,15 +38,38 @@ const byName = (a: { name: string }, b: { name: string }) =>
 /**
  * 排序選單的六個選項。列的順序就是選單的順序：時間類把「新→舊」放前面，
  * 因為找最近改過的檔案是最常見的需求。
+ *
+ * `short` 是工具列上那顆按鈕要顯示的文字。**那一列的橫向空間要留給篩選框**
+ * （月曆常放在側邊欄），所以省掉括號與「時間／日期」兩個字；
+ * 完整寫法留在選單與滑鼠提示裡，看得到也不會誤會。
  */
-const SORT_OPTIONS: { key: FileSortKey; asc: boolean; label: string }[] = [
-  { key: "name", asc: true, label: "檔名（A→Z）" },
-  { key: "name", asc: false, label: "檔名（Z→A）" },
-  { key: "mtime", asc: false, label: "修改時間（新→舊）" },
-  { key: "mtime", asc: true, label: "修改時間（舊→新）" },
-  { key: "ctime", asc: false, label: "建立日期（新→舊）" },
-  { key: "ctime", asc: true, label: "建立日期（舊→新）" },
+const SORT_OPTIONS: { key: FileSortKey; asc: boolean; label: string; short: string }[] = [
+  { key: "name", asc: true, label: "檔名（A→Z）", short: "檔名 A→Z" },
+  { key: "name", asc: false, label: "檔名（Z→A）", short: "檔名 Z→A" },
+  { key: "mtime", asc: false, label: "修改時間（新→舊）", short: "修改 新→舊" },
+  { key: "mtime", asc: true, label: "修改時間（舊→新）", short: "修改 舊→新" },
+  { key: "ctime", asc: false, label: "建立日期（新→舊）", short: "建立 新→舊" },
+  { key: "ctime", asc: true, label: "建立日期（舊→新）", short: "建立 舊→新" },
 ];
+
+/**
+ * 這個資料夾底下**所有層**的檔案。
+ *
+ * 只在篩選時用：沒打字時右欄照舊只列同一層（那是導覽，左邊那棵樹負責深度），
+ * 一打字就變成「在這個資料夾底下找」—— 要找的東西埋在哪個子資料夾，
+ * 本來就是使用者不記得才要找的事。走的是記憶體裡的 vault 樹，不讀檔案內容。
+ */
+function descendantFiles(folder: TFolder): TFile[] {
+  const out: TFile[] = [];
+  const walk = (f: TFolder) => {
+    for (const c of f.children) {
+      if (c instanceof TFile) out.push(c);
+      else if (c instanceof TFolder) walk(c);
+    }
+  };
+  walk(folder);
+  return out;
+}
 
 function iconFor(file: TFile): string {
   if (file.extension === "md") return "file-text";
@@ -53,13 +91,53 @@ export interface FileBrowserHost {
   save(): Promise<void>;
   /** 讓 .md 檔能拖到月曆日期格子排程（由月曆提供，與草稿共用同一份拖曳狀態） */
   makeDraggable(el: HTMLElement, file: TFile): void;
+  /**
+   * 宿主自己畫的虛擬清單（目前只有「已排定事項」）。
+   *
+   * 右欄本來只會列檔案，但已排定事項裡混著待辦 —— 待辦不是檔案，排不進那條路，
+   * 只好把那一塊交還給月曆畫。每次重畫都會重新呼叫，拿到的才是最新的資料。
+   */
+  customViews?(): FileBrowserCustomView[];
+}
+
+/** 宿主提供的一份虛擬清單，對應左欄樹最上面的一列 */
+export interface FileBrowserCustomView {
+  /** 存進 `fileBrowserPicked` 的識別字串，必須以冒號開頭（見 `isVirtualKey`） */
+  key: string;
+  icon: string;
+  /** 畫面上的名字，不含數量 */
+  name: string;
+  count: number;
+  /** 滑鼠提示 */
+  title: string;
+  /** 右欄內容；`filter` 是已經轉小寫、去頭尾空白的篩選字串，空清單的提示也由這裡畫 */
+  render(list: HTMLElement, filter: string): void;
+}
+
+/**
+ * 左欄樹最上面那幾列「虛擬清單」：不是真的資料夾，選中時右欄換成對應的內容。
+ *
+ * 內建的兩種（釘選筆記、草稿）都是純檔案清單，直接交給右欄現成的排序、篩選、
+ * 右鍵選單與拖曳排程；宿主提供的那種帶著 `render`，由它自己畫。
+ */
+interface VirtualView {
+  key: string;
+  icon: string;
+  name: string;
+  count: number;
+  title: string;
+  /** 清單是空的時候要說什麼（只有檔案清單用得到） */
+  empty: string;
+  /** 檔案清單；`null` 表示改走 `render` */
+  files: TFile[] | null;
+  render?: (list: HTMLElement, filter: string) => void;
 }
 
 /**
  * 月曆底部的「檔案瀏覽」收合區。
  *
- * - 左欄是從 vault 根目錄長出來的資料夾樹，最上面一列是跨資料夾的「釘選筆記」，
- *   ★ 是常用資料夾快速跳轉，↑↓ 是排序
+ * - 左欄是從 vault 根目錄長出來的資料夾樹，最上面幾列是跨資料夾的虛擬清單
+ *   （釘選筆記／草稿／已排定事項），★ 是常用資料夾快速跳轉，↑↓ 是排序
  * - 點資料夾選它（右欄換成它的檔案）、點檔案開啟（Ctrl／Cmd＋點開新分頁）
  * - .md 檔可拖到日期格子直接排程（其他檔案拖不動，沒有 frontmatter 可寫）
  * - 右鍵一律叫出 Obsidian 內建的檔案選單，不自己做重新命名／刪除
@@ -70,7 +148,7 @@ export interface FileBrowserHost {
 export class FileBrowser {
   /** 預設展開，與月曆其他四個收合區一致（使用者 2026-09-18 要求） */
   private open = true;
-  /** 篩選只對目前這一層有效，換資料夾就清掉 */
+  /** 篩選字串；找的範圍是選中的資料夾**連同它底下所有子資料夾**，換資料夾就清掉 */
   private filter = "";
   /** 延後存檔的計時器（見 saveSoon） */
   private saveTimer: number | null = null;
@@ -82,6 +160,14 @@ export class FileBrowser {
    * 單純展開／收合不捲，不然畫面會一直自己跳。
    */
   private focusPicked = false;
+  /**
+   * 左欄那棵樹捲到哪裡。
+   *
+   * 換資料夾、展開收合都會把整棵樹的 DOM 重建一次，而清空元素會讓 `scrollTop` 歸零 ——
+   * 不自己記著的話，每點一下樹就先跳回最上面，再被 `scrollIntoView` 拉到剛好露出
+   * 選中那一列的位置，看起來就像「我點的資料夾被排到最下面去了」（2026-09-19 使用者回報）。
+   */
+  private treeScroll = 0;
 
   constructor(private host: FileBrowserHost) {}
 
@@ -105,11 +191,6 @@ export class FileBrowser {
     }, 400);
   }
 
-  /** 給月曆的「全部展開／全部收合」用；下次重繪時生效 */
-  setOpen(open: boolean) {
-    this.open = open;
-  }
-
   render(container: HTMLElement) {
     if (!this.host.settings.fileBrowserEnabled) return;
     const section = container.createEl("details", { cls: "ht-fb" });
@@ -126,7 +207,10 @@ export class FileBrowser {
   private renderBody(body: HTMLElement) {
     body.empty();
     const root = this.host.app.vault.getRoot();
-    const label = this.pickedLabel();
+    // 虛擬清單在這裡算一次就好：每一份都是一趟全 vault 掃描，
+    // 而樹會因為展開／收合被單獨重畫（redrawTree），寫在裡面等於每點一次箭頭就掃一輪
+    const views = this.views();
+    const label = this.pickedLabel(views);
 
     // 收起來的時候也看得出停在哪個資料夾
     const summary = body.parentElement?.querySelector<HTMLElement>("summary");
@@ -138,44 +222,96 @@ export class FileBrowser {
     const input = bar.createEl("input", {
       type: "text",
       cls: "ht-fb-filter",
-      placeholder: `篩選「${label}」裡的檔案…`,
+      // 文案要跟著情境走：虛擬清單裡列的不一定是檔案，資料夾則要講明「連子資料夾一起找」——
+      // 找到本層以外的東西卻沒說，使用者會以為插件壞了
+      placeholder: this.currentView(views)
+        ? `篩選「${label}」…`
+        : `搜尋「${label}」與子資料夾…`,
       value: this.filter,
     });
 
-    // 排序是「這個資料夾的」，提示文字要把資料夾名講出來，不然會以為是全域設定
-    const sort = bar.createEl("span", {
-      cls: "ws-icon-btn ht-fb-sort",
-      attr: {
-        "aria-label": `「${label}」的排序：${this.sortLabel(this.pickedKey())}`,
-      },
-    });
-    setIcon(sort, "arrow-up-narrow-wide");
-    sort.onclick = (e) => this.showSortMenu(e, body);
+    // 排序是「這個資料夾的」，提示文字要把資料夾名講出來，不然會以為是全域設定。
+    // 宿主自己畫的清單（已排定事項照日期排）套不上這組排序，按鈕就不要出現 —— 留著也點不動
+    if (!this.currentView(views)?.render) {
+      const sortKey = this.pickedKey(views);
+      const sort = bar.createEl("span", {
+        cls: "ws-icon-btn ht-fb-sort",
+        attr: {
+          "aria-label": `「${label}」的排序：${this.sortLabel(sortKey)}（點擊更換）`,
+        },
+      });
+      setIcon(sort.createSpan({ cls: "ht-fb-sort-icon" }), "arrow-up-narrow-wide");
+      // 排序方式直接寫在按鈕上：每個資料夾各記一份，只靠圖示的話根本看不出現在是哪一種
+      sort.createSpan({ cls: "ht-fb-sort-label", text: this.sortShort(sortKey) });
+      sort.onclick = (e) => this.showSortMenu(e, body, views);
+    }
 
     const fav = bar.createEl("span", {
       cls: "ws-icon-btn ht-fb-fav",
       attr: { "aria-label": "常用資料夾" },
     });
     setIcon(fav, "star");
-    fav.onclick = (e) => this.showFavMenu(e, body);
+    fav.onclick = (e) => this.showFavMenu(e, body, views);
 
     // ===== 兩欄：左邊是資料夾樹，右邊只有選中那個資料夾裡的檔案 =====
     const cols = body.createDiv({ cls: "ht-fb-cols" });
     const left = cols.createDiv({ cls: "ht-fb-list ht-fb-folders" });
+    // 使用者自己捲的位置也要記下來，下次重畫才回得到原處
+    left.addEventListener("scroll", () => {
+      this.treeScroll = left.scrollTop;
+    });
     const right = cols.createDiv({ cls: "ht-fb-list ht-fb-files" });
 
     input.addEventListener("input", () => {
       this.filter = input.value;
-      this.renderFiles(right, body);
+      this.renderFiles(right, body, views);
     });
 
-    // 展開／收合只要重畫左欄就好，不必連工具列跟篩選框一起重建。
-    // 釘選數量在這裡算一次傳進去：那是一趟全 vault 的掃描，
-    // 不該每次點箭頭都重跑（右欄真正要用到釘選清單時才會再掃一次）
-    const pinnedCount = scanPinnedNotes(this.host.app).length;
-    const redrawTree = () => this.renderTree(left, root, body, redrawTree, pinnedCount);
+    // 展開／收合只要重畫左欄就好，不必連工具列跟篩選框一起重建
+    const redrawTree = () => this.renderTree(left, root, body, redrawTree, views);
     redrawTree();
-    this.renderFiles(right, body);
+    this.renderFiles(right, body, views);
+  }
+
+  /**
+   * 左欄樹最上面那幾列虛擬清單。
+   *
+   * 每一份都要掃一次 vault（釘選看 frontmatter 的 `pinned`、草稿看 `publish_status`），
+   * 所以只在 `renderBody` 呼叫一次，算出來的清單直接傳給右欄用，不要重掃。
+   */
+  private views(): VirtualView[] {
+    const app = this.host.app;
+    const pinned = scanPinnedNotes(app);
+    // 草稿的掃描範圍跟著「文章掃描資料夾」設定走，與月曆底部的草稿區同一份來源
+    const drafts = scanArticles(app, this.host.settings)
+      .filter((a) => a.status === "draft")
+      .map((a) => a.file);
+
+    const views: VirtualView[] = [
+      {
+        key: PINNED_KEY,
+        icon: "pin",
+        name: "釘選筆記",
+        count: pinned.length,
+        title: "整個 vault 的釘選筆記",
+        empty: "尚無釘選筆記（在檔案上按右鍵 → 加入釘選）",
+        files: pinned,
+      },
+      {
+        key: DRAFTS_KEY,
+        icon: "pencil-line",
+        name: "草稿",
+        count: drafts.length,
+        title: "還沒排程的草稿，可拖到日期格子排程",
+        // 提示要講「怎麼做」而不是「欄位叫什麼」：第一次用的人不知道有 frontmatter 這回事
+        empty: "尚無草稿（在筆記上按右鍵 →「標記為草稿」）",
+        files: drafts,
+      },
+    ];
+    for (const v of this.host.customViews?.() ?? []) {
+      views.push({ ...v, empty: "", files: null });
+    }
+    return views;
   }
 
   /**
@@ -192,20 +328,25 @@ export class FileBrowser {
     root: TFolder,
     body: HTMLElement,
     redraw: () => void,
-    pinnedCount: number
+    views: VirtualView[]
   ) {
     list.empty();
     const expanded = new Set(this.host.settings.fileBrowserExpanded ?? []);
     const picked = this.pickedFolder();
+    const current = this.currentView(views);
 
-    // 樹最上面的「釘選筆記」：不是真的資料夾，選中時右欄改列全 vault 的釘選筆記
-    const pinRow = list.createDiv({ cls: "ht-fb-row ht-fb-pinned-row" });
-    pinRow.createSpan({ cls: "ht-fb-twist ht-fb-twist-empty" });
-    setIcon(pinRow.createSpan({ cls: "ht-fb-icon" }), "pin");
-    pinRow.createSpan({ cls: "ht-fb-name", text: `釘選筆記（${pinnedCount}）` });
-    pinRow.setAttr("title", "整個 vault 的釘選筆記");
-    if (this.isPinnedView()) pinRow.addClass("ht-fb-picked");
-    pinRow.onclick = () => this.pick(PINNED_KEY, body);
+    // 樹最上面那幾列虛擬清單（釘選筆記／草稿／已排定事項）：
+    // 不是真的資料夾，選中時右欄整個換成它們的內容。包一層才好跟底下的資料夾畫一條分界
+    const head = list.createDiv({ cls: "ht-fb-virtual" });
+    for (const v of views) {
+      const row = head.createDiv({ cls: "ht-fb-row ht-fb-virtual-row" });
+      row.createSpan({ cls: "ht-fb-twist ht-fb-twist-empty" });
+      setIcon(row.createSpan({ cls: "ht-fb-icon" }), v.icon);
+      row.createSpan({ cls: "ht-fb-name", text: `${v.name}（${v.count}）` });
+      row.setAttr("title", v.title);
+      if (current?.key === v.key) row.addClass("ht-fb-picked");
+      row.onclick = () => this.pick(v.key, body);
+    }
 
     // 選中的資料夾埋在好幾層底下時（重開 Obsidian、或從 ★ 跳過去），
     // 把它的每一層祖先都打開，不然畫面上根本看不到自己選的是哪一個
@@ -213,20 +354,19 @@ export class FileBrowser {
       expanded.add(norm(p.path));
     }
 
-    this.renderNode(
-      list,
-      root,
-      0,
-      expanded,
-      this.isPinnedView() ? PINNED_KEY : norm(picked.path),
-      body,
-      redraw
-    );
+    this.renderNode(list, root, 0, expanded, current ? current.key : norm(picked.path), body, redraw);
 
     // 從 ★ 跳過去時，選中的那一列可能埋在捲動區外面；捲過去才看得出畫面有反應
+    // 先回到原本捲到的位置，再決定要不要為了選中那一列再捲。
+    // 順序不能反：從 0 開始捲的話，`nearest` 只會把那一列剛好推到可視範圍的邊緣上
+    list.scrollTop = this.treeScroll;
+
     if (this.focusPicked) {
       this.focusPicked = false;
-      list.querySelector<HTMLElement>(".ht-fb-picked")?.scrollIntoView({ block: "nearest" });
+      const row = list.querySelector<HTMLElement>(".ht-fb-picked");
+      // 本來就看得見就別動它（點一個眼前的資料夾，畫面不該自己跳）；
+      // 真的在可視範圍外（從 ★ 跳過去）才捲，而且捲到中間，比貼著邊緣好找
+      if (row && !this.isVisibleIn(list, row)) row.scrollIntoView({ block: "center" });
     }
   }
 
@@ -255,6 +395,8 @@ export class FileBrowser {
     if (subs.length > 0) {
       setIcon(twist, isOpen ? "chevron-down" : "chevron-right");
       twist.setAttr("aria-label", isOpen ? "收合" : "展開");
+      // 空的 title 中斷繼承：不設的話會跟整列那份路徑提示同時冒出來（見 AGENTS 的提示框規則）
+      twist.setAttr("title", "");
       twist.onclick = (e) => {
         // 箭頭只管展開收合，不換右欄。整列的點擊是另一回事（見下面的 row.onclick），
         // 不擋下冒泡的話會兩件事一起做
@@ -283,6 +425,18 @@ export class FileBrowser {
     }
   }
 
+  /**
+   * 這一列是不是完整落在清單的可視範圍內。
+   *
+   * 用 `getBoundingClientRect` 兩邊相減，不要用 `offsetTop`：那是相對於最近的
+   * 定位祖先算的，而清單本身沒有 `position: relative`，量出來會是別人的座標。
+   */
+  private isVisibleIn(list: HTMLElement, row: HTMLElement): boolean {
+    const r = row.getBoundingClientRect();
+    const box = list.getBoundingClientRect();
+    return r.top >= box.top && r.bottom <= box.bottom;
+  }
+
   /** 展開／收合樹上的一個資料夾 */
   private toggle(path: string, redraw: () => void) {
     const set = new Set(this.host.settings.fileBrowserExpanded ?? []);
@@ -294,32 +448,43 @@ export class FileBrowser {
   }
 
   /**
-   * 右欄：選中那個資料夾裡的**檔案**，或（選中樹最上面那一列時）整個 vault 的釘選筆記。
+   * 右欄：選中那個資料夾裡的**檔案**，或（選中樹最上面那幾列時）對應的虛擬清單。
    *
    * 子資料夾一律不列在這裡 —— 它們是左欄那棵樹的事。
    */
-  private renderFiles(list: HTMLElement, body: HTMLElement) {
+  private renderFiles(list: HTMLElement, body: HTMLElement, views: VirtualView[]) {
     list.empty();
-    const pinnedView = this.isPinnedView();
+    const view = this.currentView(views);
     const q = this.filter.trim().toLowerCase();
 
-    const source = pinnedView
-      ? scanPinnedNotes(this.host.app)
-      : this.pickedFolder().children.filter((c): c is TFile => c instanceof TFile);
+    // 已排定事項那種混著待辦的清單，整塊交還給宿主畫（空清單的提示也是它畫）
+    if (view?.render) {
+      view.render(list, q);
+      return;
+    }
+
+    // 沒打字時只列同一層（導覽是左邊那棵樹的事）；一打字就連子資料夾一起找
+    const folder = view ? null : this.pickedFolder();
+    const base = folder ? norm(folder.path) : "";
+    const source = folder
+      ? q
+        ? descendantFiles(folder)
+        : folder.children.filter((c): c is TFile => c instanceof TFile)
+      : (view?.files ?? []);
     const files = source
-      // 釘選筆記本來就都是 .md，這道篩選只對資料夾有意義
-      .filter((f) => pinnedView || !this.host.settings.fileBrowserMdOnly || f.extension === "md")
+      // 虛擬清單本來就都是 .md，這道篩選只對資料夾有意義
+      .filter((f) => view !== null || !this.host.settings.fileBrowserMdOnly || f.extension === "md")
       .filter((f) => !q || f.name.toLowerCase().includes(q))
-      .sort(this.fileComparator(this.pickedKey()));
+      .sort(this.fileComparator(this.pickedKey(views)));
 
     if (files.length === 0) {
       list.createSpan({
         cls: "ws-cal-hint",
         text: q
-          ? "沒有符合的檔案"
-          : pinnedView
-            ? "尚無釘選筆記（在檔案上按右鍵 → 加入釘選）"
-            : "這個資料夾沒有檔案",
+          ? view
+            ? "沒有符合的項目"
+            : "這個資料夾與底下的子資料夾都沒有符合的檔案"
+          : (view?.empty ?? "這個資料夾沒有檔案"),
       });
       return;
     }
@@ -330,6 +495,14 @@ export class FileBrowser {
       // .md 是主場，副檔名沒有資訊量就不顯示；其他檔案留著才看得出型別
       row.createSpan({ cls: "ht-fb-name", text: f.extension === "md" ? f.basename : f.name });
       row.setAttr("title", f.path);
+      // 篩選撈到子資料夾裡的檔案時，右邊補上它相對於目前資料夾的位置。
+      // 不標的話，兩個同名的筆記看起來一模一樣，也看不出自己已經找到本層以外了
+      if (folder) {
+        const parent = norm(f.parent?.path ?? "");
+        if (parent !== base) {
+          row.createSpan({ cls: "ht-fb-sub", text: base ? parent.slice(base.length + 1) : parent });
+        }
+      }
       row.onclick = (e) => {
         // Ctrl／Cmd＋點 → 新分頁，與 Obsidian 各處的開檔行為一致
         this.host.app.workspace.getLeaf(Keymap.isModEvent(e)).openFile(f);
@@ -346,11 +519,11 @@ export class FileBrowser {
       });
       // 只有 md 能排程：其他檔案沒有 frontmatter 可寫，拖過去也沒意義
       if (f.extension === "md") this.host.makeDraggable(row, f);
-      if (!pinnedView) continue;
+      if (view?.key !== PINNED_KEY) continue;
       // 釘選清單上就地取消釘選，不必再去右鍵選單找
       const unpin = row.createEl("span", {
         cls: "ws-icon-btn ht-fb-unpin",
-        attr: { "aria-label": "移除釘選" },
+        attr: { "aria-label": "移除釘選", title: "" },
       });
       setIcon(unpin, "pin-off");
       unpin.onclick = async (e) => {
@@ -373,19 +546,19 @@ export class FileBrowser {
     return f instanceof TFolder ? f : root;
   }
 
-  /** 右欄現在列的是釘選筆記，而不是某個資料夾裡的檔案 */
-  private isPinnedView(): boolean {
-    return this.host.settings.fileBrowserPicked === PINNED_KEY;
+  /** 右欄現在列的是哪一份虛擬清單；`null` 表示在看某個資料夾裡的檔案 */
+  private currentView(views: VirtualView[]): VirtualView | null {
+    return views.find((v) => v.key === this.host.settings.fileBrowserPicked) ?? null;
   }
 
   /** 右欄現在這一份清單的識別字串（排序是照這個各記一份的） */
-  private pickedKey(): string {
-    return this.isPinnedView() ? PINNED_KEY : norm(this.pickedFolder().path);
+  private pickedKey(views: VirtualView[]): string {
+    return this.currentView(views)?.key ?? norm(this.pickedFolder().path);
   }
 
   /** 右欄現在這一份清單在畫面上的名字 */
-  private pickedLabel(): string {
-    return this.isPinnedView() ? "釘選筆記" : this.folderLabel(this.pickedFolder());
+  private pickedLabel(views: VirtualView[]): string {
+    return this.currentView(views)?.name ?? this.folderLabel(this.pickedFolder());
   }
 
   /** 資料夾在畫面上的名字；vault 根目錄沒有 name，用 vault 自己的名字 */
@@ -421,6 +594,9 @@ export class FileBrowser {
   private sortFor(path: string): FileSort {
     const saved = this.host.settings.fileBrowserSortByFolder?.[norm(path)];
     if (saved) return saved;
+    // 虛擬清單可以有自己的預設（草稿照修改時間新→舊），沒訂的就跟資料夾一樣走全域預設
+    const view = VIEW_SORT[path];
+    if (view) return view;
     return {
       key: this.host.settings.fileBrowserSortKey,
       asc: this.host.settings.fileBrowserSortAsc,
@@ -437,39 +613,48 @@ export class FileBrowser {
     return (a, b) => (time(a) - time(b)) * dir || byName(a, b);
   }
 
-  /** 某個資料夾目前排序方式的說明文字，給按鈕的提示用 */
-  private sortLabel(path: string): string {
+  /** 某個資料夾目前的排序選項；設定值對不上任何一個時退回第一個（檔名 A→Z） */
+  private sortOption(path: string) {
     const { key, asc } = this.sortFor(path);
-    const hit = SORT_OPTIONS.find((o) => o.key === key && o.asc === asc);
-    return (hit ?? SORT_OPTIONS[0]).label;
+    return SORT_OPTIONS.find((o) => o.key === key && o.asc === asc) ?? SORT_OPTIONS[0];
+  }
+
+  /** 完整寫法，給選單與滑鼠提示用 */
+  private sortLabel(path: string): string {
+    return this.sortOption(path).label;
+  }
+
+  /** 精簡寫法，給工具列那顆按鈕用 */
+  private sortShort(path: string): string {
+    return this.sortOption(path).short;
   }
 
   /**
    * 記住某個資料夾的排序。
    *
    * 順手清掉已經不存在的資料夾紀錄 —— 不然改名或刪除過的資料夾會一直留在
-   * `data.json` 裡愈積愈多。空字串是 vault 根目錄，`PINNED_KEY` 是釘選清單，
-   * 兩個都不是真的資料夾，永遠留著。
+   * `data.json` 裡愈積愈多。空字串是 vault 根目錄，冒號開頭的是虛擬清單，
+   * 都不是真的資料夾，永遠留著。
    */
   private saveSort(path: string, sort: FileSort) {
     const map = this.host.settings.fileBrowserSortByFolder ?? {};
     const next: Record<string, FileSort> = { [norm(path)]: sort };
     for (const [p, s] of Object.entries(map)) {
       if (p === norm(path)) continue;
-      if (!p || p === PINNED_KEY) next[p] = s;
+      if (!p || isVirtualKey(p)) next[p] = s;
       else if (this.host.app.vault.getAbstractFileByPath(p) instanceof TFolder) next[p] = s;
     }
     this.host.settings.fileBrowserSortByFolder = next;
     this.saveSoon();
   }
 
-  private showSortMenu(e: MouseEvent, body: HTMLElement) {
+  private showSortMenu(e: MouseEvent, body: HTMLElement, views: VirtualView[]) {
     const menu = new Menu();
-    const path = this.pickedKey();
+    const path = this.pickedKey(views);
     const { key, asc } = this.sortFor(path);
 
     // 標明這組排序只影響哪個資料夾：每個資料夾各記一份，不講清楚會以為是全域設定
-    menu.addItem((i) => i.setTitle(`「${this.pickedLabel()}」的排序`).setDisabled(true));
+    menu.addItem((i) => i.setTitle(`「${this.pickedLabel(views)}」的排序`).setDisabled(true));
 
     SORT_OPTIONS.forEach((o, i) => {
       // 換一種依據就畫一條分隔線，三組（檔名／修改／建立）一眼分得開
@@ -501,7 +686,7 @@ export class FileBrowser {
     menu.showAtMouseEvent(e);
   }
 
-  private showFavMenu(e: MouseEvent, body: HTMLElement) {
+  private showFavMenu(e: MouseEvent, body: HTMLElement, views: VirtualView[]) {
     const menu = new Menu();
     const favs = this.host.settings.favoriteFolders;
     // 「目前資料夾」＝右欄正在看的那一個（設定裡的根目錄是空字串，不是 "/"）
@@ -520,9 +705,10 @@ export class FileBrowser {
     }
 
     menu.addSeparator();
-    // 釘選筆記不是資料夾，加進常用沒有意義；不擋的話會默默把 vault 根加進去
-    if (this.isPinnedView()) {
-      menu.addItem((i) => i.setTitle("釘選筆記不是資料夾，不能加入常用").setDisabled(true));
+    // 虛擬清單不是資料夾，加進常用沒有意義；不擋的話會默默把 vault 根加進去
+    const view = this.currentView(views);
+    if (view) {
+      menu.addItem((i) => i.setTitle(`「${view.name}」不是資料夾，不能加入常用`).setDisabled(true));
       menu.showAtMouseEvent(e);
       return;
     }

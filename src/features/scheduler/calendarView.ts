@@ -12,7 +12,8 @@ import {
 } from "obsidian-daily-notes-interface";
 import type { SchedulerContext } from "./context";
 import { scanArticles, setArticleSchedule } from "./articles";
-import { FileBrowser } from "./fileBrowser";
+import { FileBrowser, SCHEDULED_KEY } from "./fileBrowser";
+import type { FileBrowserCustomView } from "./fileBrowser";
 import { AddTodoModal } from "./modals";
 import { Article, TodoItem, formatDate, todayStr } from "./types";
 
@@ -23,14 +24,22 @@ const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
 /** 拖曳中的項目，存在檢視實例上（跨月翻頁重繪後仍有效） */
 type DragPayload = { kind: "article"; file: TFile } | { kind: "todo"; item: TodoItem };
 
+/** 已排定事項的一列：已排程文章或有到期日的未完成待辦 */
+type ScheduledEntry = { date: string } & (
+  | { kind: "article"; article: Article }
+  | { kind: "todo"; todo: TodoItem }
+);
+
 /**
  * 發佈月曆（插件主畫面）：
  * - 點日期格子空白處 → 新增該天到期的待辦；滑到空白處會列出當天所有事項
  * - 已排程文章與未完成待辦可拖曳到別天改期
  * - 拖曳中懸停在上／下月箭頭約半秒會自動翻頁
- * - 底部依序為「草稿」「已排定事項」「未排定待辦」「檔案瀏覽」四個收合區；
- *   釘選筆記在「檔案瀏覽」的資料夾樹最上面那一列
- *   已排定事項是所有排程的總覽（不分月份），未排定待辦可拖進日期指定到期日
+ * - 底部依序為「未排定待辦」「已排定事項」「檔案瀏覽」三個收合區；
+ *   未排定待辦可拖進日期指定到期日，已排定事項是所有排程的總覽（不分月份）
+ * - 「檔案瀏覽」左欄樹最上面有三列虛擬清單：釘選筆記、草稿、已排定事項。
+ *   草稿只剩這一個入口（底部的獨立草稿區 2026-09-19 拿掉了）；
+ *   已排定事項兩邊都有，底部看整體、檔案瀏覽看細項
  * - 待辦項目有鉛筆按鈕，可原地編輯內容（Enter 儲存、Esc 取消），不用開 Todo 檔
  */
 export class CalendarView extends ItemView {
@@ -41,14 +50,20 @@ export class CalendarView extends ItemView {
   private refreshTimer: number | null = null;
   /** 「未排定待辦」收合區的展開狀態，跨重繪保留，預設展開 */
   private unscheduledOpen = true;
-  /** 「草稿」收合區的展開狀態，跨重繪保留，預設展開 */
-  private draftsOpen = true;
   /** 「已排定事項」收合區的展開狀態，跨重繪保留，預設展開 */
   private scheduledOpen = true;
   /** 是否正在原地編輯待辦（編輯中不自動重繪，避免毀掉輸入框） */
   private editingTodo = false;
   /** 底部的檔案瀏覽區；狀態存在這個實例上，跨重繪保留 */
   private fileBrowser: FileBrowser;
+  /**
+   * 最近一次重繪掃到的文章與待辦。
+   *
+   * 檔案瀏覽的「已排定事項」由這裡取值：那一區會因為翻資料夾、改排序被單獨重畫，
+   * 而待辦要非同步讀檔，不可能在那個時間點現場撈。資料真的變動時月曆本來就會整個重繪，
+   * 順手把這份快照換掉。
+   */
+  private snapshot: { articles: Article[]; todos: TodoItem[] } = { articles: [], todos: [] };
 
   constructor(leaf: WorkspaceLeaf, private ctx: SchedulerContext) {
     super(leaf);
@@ -61,6 +76,7 @@ export class CalendarView extends ItemView {
       save: () => ctx.save(),
       // 檔案瀏覽裡的 md 檔共用月曆這一份拖曳狀態，拖進日期格子就會排程
       makeDraggable: (el, file) => this.makeDraggable(el, { kind: "article", file }),
+      customViews: () => this.browserViews(),
     });
   }
 
@@ -146,6 +162,8 @@ export class CalendarView extends ItemView {
     // ===== 整理事件：日期 -> 項目 =====
     const articles = scanArticles(this.app, this.ctx.settings);
     const todos = await this.ctx.todoStore.list();
+    // 檔案瀏覽的「已排定事項」在它自己重畫時要拿得到這份資料
+    this.snapshot = { articles, todos };
 
     const push = <T>(m: Map<string, T[]>, k: string, v: T) => {
       const arr = m.get(k);
@@ -240,70 +258,9 @@ export class CalendarView extends ItemView {
       this.makeDropTarget(cell, dateStr);
     }
 
-    // ===== 底部收合區的總開關 =====
-    const secBar = container.createDiv({ cls: "ws-sec-bar" });
-    const secBtn = (text: string, icon: string, open: boolean) => {
-      const btn = secBar.createEl("span", { cls: "ws-sec-btn" });
-      setIcon(btn.createSpan({ cls: "ws-sec-icon" }), icon);
-      btn.createSpan({ text });
-      btn.onclick = () => this.setAllSections(open);
-    };
-    secBtn("全部展開", "chevrons-down", true);
-    secBtn("全部收合", "chevrons-up", false);
-
-    // ===== 草稿（還沒排程的文章，可拖進日期直接排程） =====
-    // 最近改過的排前面，正在寫的草稿會浮上來
-    const drafts = articles
-      .filter((a) => a.status === "draft")
-      .sort((a, b) => b.file.stat.mtime - a.file.stat.mtime);
-    const draftSection = container.createEl("details", { cls: "ws-drafts" });
-    draftSection.open = this.draftsOpen;
-    draftSection.addEventListener("toggle", () => {
-      this.draftsOpen = draftSection.open;
-    });
-    draftSection.createEl("summary", { text: `草稿（${drafts.length}）— 可拖進日期排程` });
-    const draftList = draftSection.createDiv({ cls: "ws-draft-list" });
-    if (drafts.length === 0) {
-      draftList.createSpan({
-        cls: "ws-cal-hint",
-        text: "尚無草稿（在筆記的 publish_status 填 draft）",
-      });
-    }
-    for (const a of drafts) this.renderDraft(draftList, a.file);
-
-    // ===== 已排定事項（已排程文章＋已排定待辦的總覽，不分月份） =====
-    const scheduledEntries: ({ date: string } & (
-      | { kind: "article"; article: Article }
-      | { kind: "todo"; todo: TodoItem }
-    ))[] = [];
-    for (const a of articles) {
-      if (a.status === "scheduled" && a.publishDate) scheduledEntries.push({ date: a.publishDate, kind: "article", article: a });
-    }
-    for (const t of todos) {
-      if (!t.done && t.dueDate) scheduledEntries.push({ date: t.dueDate, kind: "todo", todo: t });
-    }
-    // 依日期由近到遠；sort 是穩定排序，同一天維持「先文章後待辦」，與上方格子內順序一致
-    scheduledEntries.sort((a, b) => a.date.localeCompare(b.date));
-
-    const schSection = container.createEl("details", { cls: "ws-scheduled" });
-    schSection.open = this.scheduledOpen;
-    schSection.addEventListener("toggle", () => {
-      this.scheduledOpen = schSection.open;
-    });
-    schSection.createEl("summary", { text: `已排定事項（${scheduledEntries.length}）` });
-    const schList = schSection.createDiv({ cls: "ws-sch-list" });
-    if (scheduledEntries.length === 0) {
-      schList.createSpan({ cls: "ws-cal-hint", text: "尚無已排定的文章或待辦" });
-    }
-    for (const entry of scheduledEntries) {
-      const row = schList.createDiv({ cls: "ws-sch-row" });
-      const weekday = WEEKDAYS[new Date(entry.date + "T00:00:00").getDay()];
-      row.createSpan({ cls: "ws-sch-date", text: `${entry.date}（${weekday}）` });
-      if (entry.kind === "article") this.renderArticle(row, entry.article, entry.date);
-      else this.renderTodo(row, entry.todo, entry.date < today);
-    }
-
     // ===== 未排定待辦（沒有到期日的未完成項目） =====
+    // 排在已排定事項上面：這一區是「還沒決定哪天做」的收件匣，
+    // 要先看到它才會想把東西拖進月曆（使用者 2026-09-19 要求的順序）
     const unscheduled = todos.filter((t) => !t.done && !t.dueDate);
     const section = container.createEl("details", { cls: "ws-unscheduled" });
     section.open = this.unscheduledOpen;
@@ -332,20 +289,95 @@ export class CalendarView extends ItemView {
     const listEl = section.createDiv({ cls: "ws-unsch-list" });
     for (const t of unscheduled) this.renderTodo(listEl, t, false);
 
-    // ===== 檔案瀏覽（預設收合，不影響月曆原本的畫面） =====
+    // ===== 已排定事項（已排程文章＋已排定待辦的總覽，不分月份） =====
+    const scheduledEntries = this.scheduledEntries();
+    const schSection = container.createEl("details", { cls: "ws-scheduled" });
+    schSection.open = this.scheduledOpen;
+    schSection.addEventListener("toggle", () => {
+      this.scheduledOpen = schSection.open;
+    });
+    schSection.createEl("summary", { text: `已排定事項（${scheduledEntries.length}）` });
+    const schList = schSection.createDiv({ cls: "ws-sch-list" });
+    if (scheduledEntries.length === 0) {
+      schList.createSpan({ cls: "ws-cal-hint", text: "尚無已排定的文章或待辦" });
+    }
+    this.renderScheduledList(schList, scheduledEntries, false);
+
+    // ===== 檔案瀏覽（左欄樹最上面有釘選筆記／草稿／已排定事項三列） =====
     this.fileBrowser.render(container);
   }
 
   /**
-   * 底部四個收合區一次全開或全關。
-   * 新增收合區時記得接進來，否則「全部展開」會漏掉它。
+   * 已排定事項：已排程文章 ＋ 有到期日的未完成待辦，不分月份，依日期由近到遠。
+   * 底部的收合區與檔案瀏覽左欄那一列共用這一份。
    */
-  private setAllSections(open: boolean) {
-    this.draftsOpen = open;
-    this.scheduledOpen = open;
-    this.unscheduledOpen = open;
-    this.fileBrowser.setOpen(open);
-    this.render();
+  private scheduledEntries(): ScheduledEntry[] {
+    const entries: ScheduledEntry[] = [];
+    for (const a of this.snapshot.articles) {
+      if (a.status === "scheduled" && a.publishDate) {
+        entries.push({ date: a.publishDate, kind: "article", article: a });
+      }
+    }
+    for (const t of this.snapshot.todos) {
+      if (!t.done && t.dueDate) entries.push({ date: t.dueDate, kind: "todo", todo: t });
+    }
+    // sort 是穩定排序，同一天維持「先文章後待辦」，與日期格子裡的順序一致
+    return entries.sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  /** 已排定事項的清單本體。`compact` 給檔案瀏覽右欄用：那一欄很窄，日期省掉年份 */
+  private renderScheduledList(list: HTMLElement, entries: ScheduledEntry[], compact: boolean) {
+    const today = todayStr();
+    for (const entry of entries) {
+      const row = list.createDiv({ cls: "ws-sch-row" });
+      const weekday = WEEKDAYS[new Date(entry.date + "T00:00:00").getDay()];
+      row.createSpan({
+        cls: "ws-sch-date",
+        text: `${compact ? entry.date.slice(5) : entry.date}（${weekday}）`,
+      });
+      if (entry.kind === "article") this.renderArticle(row, entry.article, entry.date);
+      else this.renderTodo(row, entry.todo, entry.date < today);
+    }
+  }
+
+  /**
+   * 檔案瀏覽左欄樹最上面的「已排定事項」那一列。
+   *
+   * 釘選筆記與草稿都是純檔案清單，檔案瀏覽自己就能列；已排定事項混著待辦，
+   * 待辦不是檔案，只能整塊交回月曆畫（連帶勾選、原地編輯、拖曳改期都照舊能用）。
+   */
+  private browserViews(): FileBrowserCustomView[] {
+    const entries = this.scheduledEntries();
+    return [
+      {
+        key: SCHEDULED_KEY,
+        icon: "calendar-clock",
+        name: "已排定事項",
+        count: entries.length,
+        title: "所有已排程的文章與已排定的待辦（不分月份）",
+        render: (list, filter) => {
+          // 日期也拿來比對，打「09-21」就能只看那一天
+          const hit = filter
+            ? entries.filter(
+                (e) => this.entryText(e).toLowerCase().includes(filter) || e.date.includes(filter)
+              )
+            : entries;
+          if (hit.length === 0) {
+            list.createSpan({
+              cls: "ws-cal-hint",
+              text: filter ? "沒有符合的事項" : "尚無已排定的文章或待辦",
+            });
+            return;
+          }
+          this.renderScheduledList(list.createDiv({ cls: "ht-fb-sch" }), hit, true);
+        },
+      },
+    ];
+  }
+
+  /** 一列已排定事項的文字，給篩選比對用 */
+  private entryText(entry: ScheduledEntry): string {
+    return entry.kind === "article" ? entry.article.file.basename : entry.todo.text;
   }
 
   /** 開啟該日的每日筆記，不存在就先依核心外掛設定（格式／資料夾／範本）建立 */
@@ -388,7 +420,7 @@ export class CalendarView extends ItemView {
     };
 
     if (published) {
-      const undo = el.createEl("span", { cls: "ws-icon-btn ws-ev-remove", attr: { "aria-label": "退回已排程" } });
+      const undo = el.createEl("span", { cls: "ws-icon-btn ws-ev-remove", attr: { "aria-label": "退回已排程", title: "" } });
       setIcon(undo, "x");
       undo.onclick = async (e) => {
         e.stopPropagation(); // 不讓點擊冒泡到 el.onclick 開啟筆記
@@ -406,7 +438,7 @@ export class CalendarView extends ItemView {
       return;
     }
 
-    const done = el.createEl("span", { cls: "ws-icon-btn ws-ev-publish", attr: { "aria-label": "標記為已發佈" } });
+    const done = el.createEl("span", { cls: "ws-icon-btn ws-ev-publish", attr: { "aria-label": "標記為已發佈", title: "" } });
     setIcon(done, "check");
     done.onclick = async (e) => {
       e.stopPropagation(); // 不讓點擊冒泡到 el.onclick 開啟筆記
@@ -417,7 +449,7 @@ export class CalendarView extends ItemView {
       this.render();
     };
 
-    const rm = el.createEl("span", { cls: "ws-icon-btn ws-ev-remove", attr: { "aria-label": "取消排程" } });
+    const rm = el.createEl("span", { cls: "ws-icon-btn ws-ev-remove", attr: { "aria-label": "取消排程", title: "" } });
     setIcon(rm, "x");
     rm.onclick = async (e) => {
       e.stopPropagation(); // 不讓點擊冒泡到 el.onclick 開啟筆記
@@ -444,14 +476,14 @@ export class CalendarView extends ItemView {
       const f = this.ctx.todoStore.getFile();
       if (f) this.app.workspace.getLeaf("tab").openFile(f);
     };
-    const edit = el.createEl("span", { cls: "ws-icon-btn ws-ev-edit", attr: { "aria-label": "編輯內容" } });
+    const edit = el.createEl("span", { cls: "ws-icon-btn ws-ev-edit", attr: { "aria-label": "編輯內容", title: "" } });
     setIcon(edit, "pencil");
     edit.onclick = (e) => {
       e.stopPropagation(); // 不讓點擊冒泡到 el.onclick 開啟 Todo 檔
       this.startEditTodo(el, textSpan, item);
     };
     if (item.dueDate) {
-      const rm = el.createEl("span", { cls: "ws-icon-btn ws-ev-remove", attr: { "aria-label": "改為未排定" } });
+      const rm = el.createEl("span", { cls: "ws-icon-btn ws-ev-remove", attr: { "aria-label": "改為未排定", title: "" } });
       setIcon(rm, "x");
       rm.onclick = async (e) => {
         e.stopPropagation(); // 不讓點擊冒泡到 el.onclick 開啟 Todo 檔
@@ -495,18 +527,6 @@ export class CalendarView extends ItemView {
       else if (e.key === "Escape") finish(false);
     });
     input.addEventListener("blur", () => finish(true));
-  }
-
-  /** 草稿項目：點擊開啟筆記，拖到日期格子即排程。還沒有日期，所以沒有 ×。 */
-  private renderDraft(parent: HTMLElement, file: TFile) {
-    const el = parent.createDiv({ cls: "ws-cal-event ws-ev-draft" });
-    el.createSpan({ text: file.basename });
-    el.setAttr("title", file.path); // 同名筆記靠完整路徑分辨
-    el.onclick = (e) => {
-      e.stopPropagation();
-      this.app.workspace.getLeaf("tab").openFile(file);
-    };
-    this.makeDraggable(el, { kind: "article", file });
   }
 
   private makeDraggable(el: HTMLElement, payload: DragPayload) {

@@ -73,13 +73,12 @@ from the 📅 ribbon icon or the **Open publishing calendar** command.
   scheduled
 - To-dos have a checkbox to complete them, and a pencil button to rename them in place
   (Enter or click away to save, Esc to cancel)
-- Below the grid are four collapsible sections — **Drafts**, **Scheduled items**,
-  **Unscheduled to-dos** and **File browser** — with buttons to expand or collapse all
-  four at once
-  - **Drafts** lists every note with `publish_status: draft`, most recently edited first.
-    **Drag one onto a day to schedule it** — it moves out of drafts onto that day
-  - **Scheduled items** is a flat, date-ordered overview of everything upcoming, across months
+- Below the grid are three collapsible sections — **Unscheduled to-dos**, **Scheduled
+  items** and **File browser** — each collapsed from its own heading
   - **Unscheduled to-dos** holds to-dos with no due date; drag one onto a day to give it one
+  - **Scheduled items** is a flat, date-ordered overview of everything upcoming, across months
+  - **File browser** is a folder tree with a file list beside it, so you can browse without
+    leaving the calendar; drafts and pinned notes live here too
 - Put the calendar wherever you like — right sidebar, left sidebar or the main editor area.
   **It stays where you put it.** Re-running the command reveals the existing calendar rather
   than opening a second one, and Obsidian restores its position on restart
@@ -102,9 +101,18 @@ it from its heading, or turn the whole section off in settings.
   folder you picked on the right
 - The tree grows from the vault root (the top row is your vault's own name), so **folders
   with subfolders stay in the left column** and the whole structure is visible at a glance
-- **Pinned notes (N) sits at the top of the left column.** Click it and the right column
-  lists every pinned note in the vault, across folders; hover a row for an unpin button,
-  no right-click needed. They can still be dragged onto a day to schedule them
+- **Three lists that aren't folders sit at the top of the left column** (orange icons, with
+  a rule separating them from the folders below). Click one and the right column swaps to it:
+  - **Pinned notes (N)** — every pinned note in the vault, across folders; hover a row for
+    an unpin button, no right-click needed
+  - **Drafts (N)** — right-click any note → **Mark as draft** and it shows up here, most
+    recently edited first. **Drag one onto a day to schedule it** and it moves out of the
+    draft list onto that day
+  - **Scheduled (N)** — every scheduled article and dated to-do, soonest first, each row
+    prefixed with its date and weekday and outlined in red when overdue; the checkbox,
+    inline editing, × and drag-to-reschedule all work as they do on a day cell. In this
+    list the filter box matches dates too, so `09-21` shows just that day
+  Notes in any of these lists can still be dragged onto a day to schedule them
 - **Clicking a folder expands or collapses it** and swaps the right column to its files at
   the same time — no need to aim for the little chevron (click the chevron itself if you
   only want to expand without changing the right column). Expanded state is remembered
@@ -113,9 +121,14 @@ it from its heading, or turn the whole section off in settings.
   narrowed down**, it just expands to that folder, scrolls the left column to it and swaps
   the right column to its files, so its siblings stay in view. Add the current folder from
   the bottom of the same menu
-- The filter box filters the right column only, live as you type, and clears when you
-  change folder
-- The ↑↓ icon sets the sort order: **file name** (A→Z / Z→A), **modified time**
+- The filter box works live as you type and clears when you change folder. **It searches the
+  selected folder and every subfolder below it** (with the box empty the right column lists
+  just that one level — depth is the tree's job). Matches from a subfolder show their path
+  relative to the current folder, so same-named notes stay distinguishable; pick the vault
+  root and you are searching everything. It matches file names, not note contents — use
+  Obsidian's own search for that
+- Next to the filter box is a button showing the right column's current sort order;
+  **click it to change it**: **file name** (A→Z / Z→A), **modified time**
   (newest / oldest first) or **created date** (newest / oldest first). **Each folder
   remembers its own** — raw material by last modified, finished articles by name — and the
   choices survive restarts. **Set as the default for other folders** at the bottom of the
@@ -126,7 +139,7 @@ it from its heading, or turn the whole section off in settings.
   you can tell where you left off even with the section collapsed
 - Click a file to open it in the current tab; `Ctrl`/`Cmd`-click or middle-click opens it in
   a new tab. `.md` files hide their extension; images, PDFs and others show the full name
-- **Drag any note onto a day cell to schedule it**, exactly like dragging from Drafts.
+- **Drag any note onto a day cell to schedule it** — not just notes already marked as drafts.
   Non-Markdown files can't be dragged (there's no frontmatter to write)
 - Right-click a file or folder for **Open in new tab**, **Open to the right**, **Rename**,
   **Duplicate** and **Delete**, followed by items other plugins contribute. Renaming updates
@@ -141,10 +154,15 @@ it from its heading, or turn the whole section off in settings.
 
 - Any note can be scheduled. The schedule lives in the note's frontmatter:
   `publish_status` (idea / draft / scheduled / published), `publish_date` (planned),
-  `published_date` (actual) and an optional `platform` tag
+  `published_date` (actual) and an optional `platform` tag. **You never have to write these
+  fields yourself** — the actions below do it for you
+- **Mark this note as a draft** puts it in the file browser's draft list, ready to be
+  dragged onto a day. The same action is on the right-click menu of any note (file explorer,
+  tab title, editor menu and links); on a note that is already a draft it becomes **Remove
+  draft mark**, which clears the scheduling fields and leaves the note as it was
 - **Schedule this note for publishing** opens a date picker; you can set the platform tag at
-  the same time. The same action is on the right-click menu of any note (file explorer, tab
-  title, editor menu and links)
+  the same time, and it's also on the right-click menu. A note doesn't have to be a draft
+  first
 - **Mark this note as published** sets the status and stamps today's date. To use a
   different date, click ✓ on the calendar instead
 - Scanning can be limited to one folder in settings; leave it empty to scan the whole vault

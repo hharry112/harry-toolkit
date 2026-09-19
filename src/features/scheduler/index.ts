@@ -7,7 +7,14 @@ import {
   TFile,
   WorkspaceLeaf,
 } from "obsidian";
-import { isPinned, normalizeDate, setArticleSchedule, setPinned } from "./articles";
+import {
+  articleStatus,
+  clearArticleStatus,
+  isPinned,
+  normalizeDate,
+  setArticleSchedule,
+  setPinned,
+} from "./articles";
 import { CALENDAR_VIEW_TYPE, CalendarView } from "./calendarView";
 import type { SchedulerContext } from "./context";
 import { AddTodoModal, ScheduleModal } from "./modals";
@@ -92,6 +99,27 @@ function openScheduleModal(ctx: SchedulerContext, file: TFile) {
   ).open();
 }
 
+/**
+ * 標記為草稿（指令與右鍵選單共用）。
+ *
+ * 草稿的定義就是 frontmatter 的 `publish_status: draft`，但**不能要求使用者自己去填** ——
+ * 第一次用的人根本不會知道有這個欄位、更不會知道要填什麼字（使用者 2026-09-19 問的就是這件事）。
+ * 所以標成草稿一定要有一個看得到的入口，跟「標記為已發佈」擺在一起。
+ */
+async function markDraft(app: App, file: TFile) {
+  try {
+    // 連兩個日期一起清掉：草稿的意思是「還沒排、也還沒發」，留著舊日期會自相矛盾
+    await setArticleSchedule(app, file, {
+      status: "draft",
+      publishDate: null,
+      publishedDate: null,
+    });
+    new Notice(`已標記為草稿：${file.basename}`);
+  } catch (e) {
+    new Notice("寫入 frontmatter 失敗，請檢查該筆記的 YAML 是否格式正確");
+  }
+}
+
 /** 開啟「筆記加入待辦」對話框（指令與右鍵選單共用），內容預填筆記連結 */
 function openNoteTodoModal(ctx: SchedulerContext, file: TFile) {
   // 用 fileToLinktext 產生連結文字，同名筆記在不同資料夾時會自動帶路徑
@@ -148,6 +176,18 @@ export const schedulerFeature: Feature<SchedulerSettings> = {
     });
 
     plugin.addCommand({
+      id: "mark-draft",
+      name: "將目前筆記標記為草稿",
+      checkCallback: (checking) => {
+        const view = app.workspace.getActiveViewOfType(MarkdownView);
+        if (!view?.file) return false;
+        if (checking) return true;
+        markDraft(app, view.file);
+        return true;
+      },
+    });
+
+    plugin.addCommand({
       id: "mark-published",
       name: "標記目前筆記為已發佈",
       checkCallback: (checking) => {
@@ -197,10 +237,30 @@ export const schedulerFeature: Feature<SchedulerSettings> = {
     });
 
     // 檔案右鍵選單（檔案總管、分頁標題、編輯器選單、連結右鍵都會出現）：
-    // 排入發佈行程、加入待辦、加入／移除釘選
+    // 標記為草稿、排入發佈行程、標記為已發佈、加入待辦、加入／移除釘選
     plugin.registerEvent(
       app.workspace.on("file-menu", (menu, file) => {
         if (!(file instanceof TFile) || file.extension !== "md") return;
+        // 照著流程排：草稿 → 排程 → 已發佈。第一項也是新手唯一找得到的「怎麼變成草稿」入口。
+        // 已經是草稿的筆記改成「移除草稿標記」，不然沒有任何方法把它從草稿清單拿掉
+        const isDraft = articleStatus(app, file) === "draft";
+        menu.addItem((item) =>
+          item
+            .setTitle(isDraft ? "移除草稿標記" : "標記為草稿")
+            .setIcon(isDraft ? "file-x" : "pencil-line")
+            .onClick(async () => {
+              if (!isDraft) {
+                await markDraft(app, file);
+                return;
+              }
+              try {
+                await clearArticleStatus(app, file);
+                new Notice(`已移除草稿標記：${file.basename}`);
+              } catch (e) {
+                new Notice("寫入 frontmatter 失敗，請檢查該筆記的 YAML 是否格式正確");
+              }
+            })
+        );
         menu.addItem((item) =>
           item
             .setTitle("排入發佈行程")

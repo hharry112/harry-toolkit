@@ -44,6 +44,26 @@ export function scanArticles(app: App, settings: SchedulerSettings): Article[] {
   return articles;
 }
 
+/** 這篇筆記目前的發佈狀態；沒有 `publish_status`（或值不認得）就是 null，代表插件沒在管它 */
+export function articleStatus(app: App, file: TFile): PublishStatus | null {
+  return normalizeStatus(app.metadataCache.getFileCache(file)?.frontmatter?.[FM_STATUS]);
+}
+
+/**
+ * 把筆記移出發佈流程：刪掉狀態與兩個日期欄位，讓它回到原狀。
+ *
+ * 只刪不留是刻意的 —— 狀態一旦沒了，`scanArticles` 就整篇跳過，
+ * 留著的 `publish_date` 沒有任何地方讀得到，只會變成沒人看得懂的殘留欄位。
+ * 平台標記保留（那是筆記自己的資訊，不屬於排程流程）。
+ */
+export async function clearArticleStatus(app: App, file: TFile): Promise<void> {
+  await app.fileManager.processFrontMatter(file, (fm) => {
+    delete fm[FM_STATUS];
+    delete fm[FM_DATE];
+    delete fm[FM_PUBLISHED];
+  });
+}
+
 /** 這篇筆記是否已釘選（frontmatter 解析失敗或值非 true 一律視為未釘選） */
 export function isPinned(app: App, file: TFile): boolean {
   const v = app.metadataCache.getFileCache(file)?.frontmatter?.[FM_PINNED];
