@@ -68,11 +68,9 @@ export interface SchedulerSettings {
   calendarLocation: CalendarLocation;
   /** 是否在月曆底部顯示「檔案瀏覽」收合區 */
   fileBrowserEnabled: boolean;
-  /** 檔案瀏覽目前停留的資料夾（vault 相對路徑，空字串 = 根目錄），左欄列出它的子資料夾 */
-  fileBrowserFolder: string;
   /**
    * 左欄樹上目前選中的資料夾（vault 相對路徑），右欄顯示的就是它裡面的檔案。
-   * 等於 `fileBrowserFolder` 代表選的是樹根自己。
+   * 空字串 = vault 根目錄。樹一律從 vault 根長出來，沒有「換樹根」這回事。
    */
   fileBrowserPicked: string;
   /**
@@ -107,7 +105,6 @@ export const DEFAULT_SETTINGS: SchedulerSettings = {
   reminderEnabled: true,
   calendarLocation: "right",
   fileBrowserEnabled: true,
-  fileBrowserFolder: "",
   fileBrowserPicked: "",
   fileBrowserExpanded: [],
   favoriteFolders: [],

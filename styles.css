@@ -128,24 +128,12 @@
   background: rgba(var(--color-purple-rgb), 0.18);
   color: var(--color-purple);
 }
-.ws-ev-pinned {
-  background: rgba(var(--color-orange-rgb), 0.18);
-  color: var(--color-orange);
-}
 /* 草稿：刻意用中性灰而不是第五種顏色。一來「還沒排程」本來就該低調，
    二來剩下的色相（黃）在淺色主題下小字對比太差。 */
 .ws-ev-draft {
   background: var(--background-modifier-hover);
   color: var(--text-muted);
   box-shadow: inset 0 0 0 1px var(--background-modifier-border);
-}
-.ws-ev-pin-icon {
-  display: inline-flex;
-  flex-shrink: 0;
-}
-.ws-ev-pin-icon svg {
-  width: 11px;
-  height: 11px;
 }
 .ws-ev-remove,
 .ws-ev-edit,
@@ -250,16 +238,14 @@
   height: 12px;
 }
 
-/* 未排定待辦、已排定事項、釘選筆記、草稿（共用收合區樣式） */
+/* 未排定待辦、已排定事項、草稿（共用收合區樣式） */
 .ws-unscheduled,
 .ws-scheduled,
-.ws-pinned,
 .ws-drafts {
   margin-top: 12px;
 }
 .ws-unscheduled summary,
 .ws-scheduled summary,
-.ws-pinned summary,
 .ws-drafts summary {
   cursor: pointer;
   color: var(--text-muted);
@@ -268,7 +254,6 @@
 }
 .ws-unscheduled .ws-cal-event,
 .ws-scheduled .ws-cal-event,
-.ws-pinned .ws-cal-event,
 .ws-drafts .ws-cal-event {
   display: inline-flex;
   max-width: 260px;
@@ -321,49 +306,14 @@
   gap: 4px;
   margin-bottom: 4px;
 }
-.ht-fb-crumbs {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-  font-size: 0.8em;
-}
-.ht-fb-crumb {
-  cursor: pointer;
-  color: var(--text-accent);
-  padding: 0 2px;
-  border-radius: 3px;
-}
-.ht-fb-crumb:hover {
-  background: var(--background-modifier-hover);
-}
-/* 目前這一層不是連結，不給點也不給 hover 效果 */
-.ht-fb-crumb-current,
-.ht-fb-crumb-current:hover {
-  color: var(--text-muted);
-  cursor: default;
-  background: transparent;
-}
-.ht-fb-sep {
-  color: var(--text-faint);
-}
-/* 已在根目錄時的「回上一層」 */
-.ht-fb-disabled {
-  opacity: 0.35;
-  pointer-events: none;
-}
 .ht-fb-fav,
 .ht-fb-sort {
   flex-shrink: 0;
 }
+/* 篩選框跟排序、★ 同一列：側邊欄的垂直空間要留給月曆 */
 .ht-fb-filter {
-  margin-bottom: 4px;
-}
-.ht-fb-filter input {
-  width: 260px;
-  max-width: 100%;
+  flex: 1;
+  min-width: 0;
   font-size: 0.85em;
 }
 /*
@@ -460,6 +410,25 @@
 }
 .ht-fb-row[draggable="true"]:active {
   cursor: grabbing;
+}
+/* 樹最上面的「釘選筆記」：橘色圖示與一條底線，跟底下真正的資料夾分開 */
+.ht-fb-pinned-row .ht-fb-icon {
+  color: var(--color-orange);
+}
+.ht-fb-pinned-row {
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  margin-bottom: 2px;
+  padding-bottom: 3px;
+}
+/* 清單很擠，「移除釘選」平常隱藏，滑過那一列才出現 */
+.ht-fb-unpin {
+  display: none;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.ht-fb-file-row:hover .ht-fb-unpin {
+  display: inline-flex;
 }
 
 /* ===== Threads 數據面板 ===== */

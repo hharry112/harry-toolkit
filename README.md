@@ -73,9 +73,9 @@ from the 📅 ribbon icon or the **Open publishing calendar** command.
   scheduled
 - To-dos have a checkbox to complete them, and a pencil button to rename them in place
   (Enter or click away to save, Esc to cancel)
-- Below the grid are five collapsible sections — **Pinned notes**, **Drafts**,
-  **Scheduled items**, **Unscheduled to-dos** and **File browser** — with buttons to
-  expand or collapse all five at once
+- Below the grid are four collapsible sections — **Drafts**, **Scheduled items**,
+  **Unscheduled to-dos** and **File browser** — with buttons to expand or collapse all
+  four at once
   - **Drafts** lists every note with `publish_status: draft`, most recently edited first.
     **Drag one onto a day to schedule it** — it moves out of drafts onto that day
   - **Scheduled items** is a flat, date-ordered overview of everything upcoming, across months
@@ -84,6 +84,8 @@ from the 📅 ribbon icon or the **Open publishing calendar** command.
   **It stays where you put it.** Re-running the command reveals the existing calendar rather
   than opening a second one, and Obsidian restores its position on restart
 - Right-click the calendar's tab → **Move to new window** to pop it out onto a second monitor
+- Hover the empty part of a day cell to see every item due that day, with full titles that
+  the narrow cells would otherwise cut off (overdue ones are marked)
 - Click the day number to open that day's daily note, creating it if needed (it follows the
   core Daily notes plugin's format, folder and template settings). Days that already have a
   note get a small dot
@@ -98,16 +100,19 @@ it from its heading, or turn the whole section off in settings.
 
 - **Two columns**: an expandable folder tree on the left, and only the files of whichever
   folder you picked on the right
-- The tree grows from the vault root, so **folders with subfolders stay in the left column**
-  and the whole structure is visible at a glance
+- The tree grows from the vault root (the top row is your vault's own name), so **folders
+  with subfolders stay in the left column** and the whole structure is visible at a glance
+- **Pinned notes (N) sits at the top of the left column.** Click it and the right column
+  lists every pinned note in the vault, across folders; hover a row for an unpin button,
+  no right-click needed. They can still be dragged onto a day to schedule them
 - **Clicking a folder expands or collapses it** and swaps the right column to its files at
   the same time — no need to aim for the little chevron (click the chevron itself if you
   only want to expand without changing the right column). Expanded state is remembered
   across restarts
-- To narrow the tree to one folder: jump there with the ★ menu, or use the up arrow. Every
-  level of the breadcrumb is clickable
-- ★ is your favourite folders: pick one to jump there, or add the current folder from the
-  bottom of the same menu
+- ★ is your favourite folders: pick one to jump straight to it — **the tree is never
+  narrowed down**, it just expands to that folder, scrolls the left column to it and swaps
+  the right column to its files, so its siblings stay in view. Add the current folder from
+  the bottom of the same menu
 - The filter box filters the right column only, live as you type, and clears when you
   change folder
 - The ↑↓ icon sets the sort order: **file name** (A→Z / Z→A), **modified time**
@@ -117,6 +122,8 @@ it from its heading, or turn the whole section off in settings.
   menu covers every folder you haven't set individually. Name sorting is numeric-aware, so
   `20260915` sorts by value. The tree always sorts by name A→Z, since that column is for
   navigation and a stable order is easier to scan
+- The section heading names the folder you are looking at (e.g. "File browser (books)"), so
+  you can tell where you left off even with the section collapsed
 - Click a file to open it in the current tab; `Ctrl`/`Cmd`-click or middle-click opens it in
   a new tab. `.md` files hide their extension; images, PDFs and others show the full name
 - **Drag any note onto a day cell to schedule it**, exactly like dragging from Drafts.
@@ -127,7 +134,7 @@ it from its heading, or turn the whole section off in settings.
   **Settings → Files and links → Deleted files** preference
 - The list has a maximum height and scrolls internally, so a large folder never stretches
   the sidebar
-- The current folder and sort order are remembered across restarts; if the folder is renamed
+- The picked folder and sort order are remembered across restarts; if the folder is renamed
   or deleted, the browser quietly falls back to the vault root
 
 ### Article scheduling
@@ -148,6 +155,7 @@ it from its heading, or turn the whole section off in settings.
 - Pinning writes `pinned: true` to the note's frontmatter, and unpinning removes the field,
   leaving the note as it was. Adding the field by hand works too
 - Pinning is not limited by the article scan folder
+- Pinned notes are listed under **Pinned notes**, at the top of the file browser's left column
 
 ### To-dos
 

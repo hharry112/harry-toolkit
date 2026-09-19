@@ -11,7 +11,7 @@ import {
   getDailyNote,
 } from "obsidian-daily-notes-interface";
 import type { SchedulerContext } from "./context";
-import { scanArticles, scanPinnedNotes, setArticleSchedule, setPinned } from "./articles";
+import { scanArticles, setArticleSchedule } from "./articles";
 import { FileBrowser } from "./fileBrowser";
 import { AddTodoModal } from "./modals";
 import { Article, TodoItem, formatDate, todayStr } from "./types";
@@ -25,10 +25,11 @@ type DragPayload = { kind: "article"; file: TFile } | { kind: "todo"; item: Todo
 
 /**
  * 發佈月曆（插件主畫面）：
- * - 點日期格子空白處 → 新增該天到期的待辦
+ * - 點日期格子空白處 → 新增該天到期的待辦；滑到空白處會列出當天所有事項
  * - 已排程文章與未完成待辦可拖曳到別天改期
  * - 拖曳中懸停在上／下月箭頭約半秒會自動翻頁
- * - 底部依序為「釘選筆記」「草稿」「已排定事項」「未排定待辦」「檔案瀏覽」五個收合區；
+ * - 底部依序為「草稿」「已排定事項」「未排定待辦」「檔案瀏覽」四個收合區；
+ *   釘選筆記在「檔案瀏覽」的資料夾樹最上面那一列
  *   已排定事項是所有排程的總覽（不分月份），未排定待辦可拖進日期指定到期日
  * - 待辦項目有鉛筆按鈕，可原地編輯內容（Enter 儲存、Esc 取消），不用開 Todo 檔
  */
@@ -40,8 +41,6 @@ export class CalendarView extends ItemView {
   private refreshTimer: number | null = null;
   /** 「未排定待辦」收合區的展開狀態，跨重繪保留，預設展開 */
   private unscheduledOpen = true;
-  /** 「釘選筆記」收合區的展開狀態，跨重繪保留，預設展開 */
-  private pinnedOpen = true;
   /** 「草稿」收合區的展開狀態，跨重繪保留，預設展開 */
   private draftsOpen = true;
   /** 「已排定事項」收合區的展開狀態，跨重繪保留，預設展開 */
@@ -193,7 +192,11 @@ export class CalendarView extends ItemView {
       const hasDaily = !!getDailyNote(wmoment(dateStr, "YYYY-MM-DD"), dailyNotes);
       const daynum = cell.createDiv({
         cls: `ws-cal-daynum ws-daynum-btn${hasDaily ? " ws-has-daily" : ""}`,
-        attr: { "aria-label": hasDaily ? "開啟每日筆記" : "建立並開啟每日筆記" },
+        attr: {
+          "aria-label": hasDaily ? "開啟每日筆記" : "建立並開啟每日筆記",
+          // 空的 title 會中斷繼承：不設的話，格子那份當日清單會跟這顆按鈕自己的提示疊在一起
+          title: "",
+        },
       });
       daynum.createSpan({ text: String(day) });
       if (hasDaily) daynum.createSpan({ cls: "ws-daily-dot" });
@@ -202,9 +205,25 @@ export class CalendarView extends ItemView {
         this.openDailyNote(dateStr, dailyNotes);
       };
 
-      for (const a of scheduledByDate.get(dateStr) ?? []) this.renderArticle(cell, a, dateStr);
-      for (const a of publishedByDate.get(dateStr) ?? []) this.renderArticle(cell, a, dateStr);
-      for (const t of todosByDate.get(dateStr) ?? []) this.renderTodo(cell, t, dateStr < today);
+      const scheduled = scheduledByDate.get(dateStr) ?? [];
+      const published = publishedByDate.get(dateStr) ?? [];
+      const dayTodos = todosByDate.get(dateStr) ?? [];
+      const overdue = dateStr < today;
+      for (const a of scheduled) this.renderArticle(cell, a, dateStr);
+      for (const a of published) this.renderArticle(cell, a, dateStr);
+      for (const t of dayTodos) this.renderTodo(cell, t, overdue);
+
+      // 格子很窄，標題一定會被截掉，事項多的日子還會被格子高度擠掉。
+      // 滑到格子空白處就用原生提示列出當天全部事項（事項本身各有自己的 title，不會被蓋掉）。
+      const lines = [
+        ...scheduled.map((a) => `預定發佈：${a.file.basename}${overdue ? "（逾期）" : ""}`),
+        ...published.map((a) => `已發佈：${a.file.basename}`),
+        ...dayTodos.map((t) => `待辦：${t.text}${overdue ? "（逾期）" : ""}`),
+      ];
+      if (lines.length > 0) {
+        const head = `${this.month + 1} 月 ${day} 日 · ${lines.length} 件`;
+        cell.setAttr("title", [head, ...lines].join("\n"));
+      }
 
       // 點空白處新增當天待辦
       cell.onclick = () => {
@@ -231,20 +250,6 @@ export class CalendarView extends ItemView {
     };
     secBtn("全部展開", "chevrons-down", true);
     secBtn("全部收合", "chevrons-up", false);
-
-    // ===== 釘選筆記 =====
-    const pinnedFiles = scanPinnedNotes(this.app);
-    const pinSection = container.createEl("details", { cls: "ws-pinned" });
-    pinSection.open = this.pinnedOpen;
-    pinSection.addEventListener("toggle", () => {
-      this.pinnedOpen = pinSection.open;
-    });
-    pinSection.createEl("summary", { text: `釘選筆記（${pinnedFiles.length}）` });
-    const pinList = pinSection.createDiv({ cls: "ws-pinned-list" });
-    if (pinnedFiles.length === 0) {
-      pinList.createSpan({ cls: "ws-cal-hint", text: "尚無釘選筆記（在檔案上按右鍵 → 加入釘選）" });
-    }
-    for (const f of pinnedFiles) this.renderPinnedNote(pinList, f);
 
     // ===== 草稿（還沒排程的文章，可拖進日期直接排程） =====
     // 最近改過的排前面，正在寫的草稿會浮上來
@@ -332,11 +337,10 @@ export class CalendarView extends ItemView {
   }
 
   /**
-   * 底部五個收合區一次全開或全關。
+   * 底部四個收合區一次全開或全關。
    * 新增收合區時記得接進來，否則「全部展開」會漏掉它。
    */
   private setAllSections(open: boolean) {
-    this.pinnedOpen = open;
     this.draftsOpen = open;
     this.scheduledOpen = open;
     this.unscheduledOpen = open;
@@ -503,26 +507,6 @@ export class CalendarView extends ItemView {
       this.app.workspace.getLeaf("tab").openFile(file);
     };
     this.makeDraggable(el, { kind: "article", file });
-  }
-
-  /** 釘選筆記項目：點擊開啟，× 移除釘選。無日期概念，不可拖曳。 */
-  private renderPinnedNote(parent: HTMLElement, file: TFile) {
-    const el = parent.createDiv({ cls: "ws-cal-event ws-ev-pinned" });
-    const pinIcon = el.createSpan({ cls: "ws-ev-pin-icon" });
-    setIcon(pinIcon, "pin");
-    el.createSpan({ text: file.basename });
-    el.setAttr("title", file.path); // 同名筆記靠完整路徑分辨
-    el.onclick = (e) => {
-      e.stopPropagation();
-      this.app.workspace.getLeaf("tab").openFile(file);
-    };
-    const rm = el.createEl("span", { cls: "ws-icon-btn ws-ev-remove", attr: { "aria-label": "移除釘選" } });
-    setIcon(rm, "x");
-    rm.onclick = async (e) => {
-      e.stopPropagation(); // 不讓點擊冒泡到 el.onclick 開啟筆記
-      await setPinned(this.app, file, false);
-      this.render();
-    };
   }
 
   private makeDraggable(el: HTMLElement, payload: DragPayload) {
