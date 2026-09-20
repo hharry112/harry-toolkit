@@ -19,6 +19,7 @@ feature is fully offline.
 | --- | --- |
 | [Scrolling](#scrolling) | Scroll the document with a hotkey while the cursor stays put on screen |
 | [Publishing calendar](#publishing-calendar) | Scheduling calendar, to-dos, due reminders and a note browser |
+| [Copy as social post](#copy-as-social-post) | Turn a note into plain text you can paste into Facebook without losing the blank lines |
 | [Threads analytics](#threads-analytics) | Pull your own post metrics from the official API into a sortable dashboard |
 
 ---
@@ -217,6 +218,49 @@ it from its heading, or turn the whole section off in settings.
 - **Show file browser** — whether to include the file browser section
 - **Favourite folders** — one folder path per line, listed in the file browser's ★ menu
 - **File browser shows Markdown only** — hide images, PDFs and other non-note files
+
+---
+
+## Copy as social post
+
+Turns a finished note into plain text you can paste straight into Facebook. **It only touches
+the clipboard — the note itself is never modified.**
+
+Facebook drops blank lines when you paste: a note reading "one, blank line, two" arrives as two
+adjacent lines. It also collapses runs of spaces, and it doesn't understand Markdown, so
+`**bold**` shows up with the asterisks. This feature deals with all of that at the moment you
+copy.
+
+**Two entry points** (both use the same settings):
+
+- The command **Copy as Facebook post** — **if there is a selection in the editor, only the
+  selection is copied**, since a post is often just one section of a longer piece. Bind a
+  hotkey under Settings → Hotkeys
+- Right-click a note → **Copy as Facebook post** (file explorer, tab title, editor menu and
+  link right-click all work)
+
+**What the conversion does:**
+
+- **Strips the frontmatter**, so `publish_status` and friends never reach the post
+- **Protects blank lines** by putting a character on them that is invisible but does not count
+  as whitespace, which stops Facebook collapsing the line. The default is a zero-width space;
+  if that ever stops working, settings offer a braille blank instead
+- **Protects runs of spaces**, so indentation and deliberate gaps survive
+- **Strips Markdown** (optional):
+  - `**bold**`, `*italic*`, `~~strikethrough~~`, `==highlight==`, `` `code` `` → text only
+  - `## Heading` → the heading text; **`#tag` is left alone** (that's a Facebook hashtag)
+  - `[text](url)` → `text (url)` — **the URL is always kept**, since Facebook needs it to build
+    the link preview
+  - `[[wikilinks]]` and `[[link|alias]]` → the displayed text
+  - Lists → a `• ` prefix, flattened (Facebook strips leading whitespace anyway)
+  - `---` rules → `———`
+  - **Images and `%%comments%%` are removed entirely** — upload images on Facebook itself, and
+    Obsidian comments are private notes to yourself
+
+A notice reports the character count, excluding line breaks and the invisible characters.
+
+**Settings:** strip Markdown (on/off), blank-line character (zero-width space / braille blank /
+none), protect runs of spaces (on/off).
 
 ---
 

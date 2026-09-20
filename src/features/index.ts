@@ -1,4 +1,5 @@
 import type { Feature } from "../core/feature";
+import { postCopyFeature } from "./postcopy";
 import { schedulerFeature } from "./scheduler";
 import { scrollFeature } from "./scroll";
 import { threadsFeature } from "./threads";
@@ -10,4 +11,10 @@ import { threadsFeature } from "./threads";
  * 然後在這個陣列加一行。設定頁、預設值、啟用開關都會自動生出來。
  * 陣列順序 = 設定頁上的區塊順序。
  */
-export const FEATURES: Feature[] = [scrollFeature, schedulerFeature, threadsFeature];
+// 複製貼文排在排程後面：兩者都屬於「把寫好的東西發出去」這條流程
+export const FEATURES: Feature[] = [
+  scrollFeature,
+  schedulerFeature,
+  postCopyFeature,
+  threadsFeature,
+];

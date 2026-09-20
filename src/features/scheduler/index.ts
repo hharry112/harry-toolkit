@@ -367,7 +367,7 @@ export const schedulerFeature: Feature<SchedulerSettings> = {
       .setName("顯示檔案瀏覽")
       .setDesc(
         "在月曆最底部加一個「檔案瀏覽」收合區，可以一邊看月曆一邊翻資料夾。" +
-          "預設是收起來的，點一下才展開。"
+          "預設是展開的，點標題可以收起來。"
       )
       .addToggle((t) =>
         t.setValue(ctx.settings.fileBrowserEnabled).onChange(async (v) => {
