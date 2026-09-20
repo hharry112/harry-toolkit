@@ -140,7 +140,23 @@ it from its heading, or turn the whole section off in settings.
 - Click a file to open it in the current tab; `Ctrl`/`Cmd`-click or middle-click opens it in
   a new tab. `.md` files hide their extension; images, PDFs and others show the full name
 - **Drag any note onto a day cell to schedule it** — not just notes already marked as drafts.
-  Non-Markdown files can't be dragged (there's no frontmatter to write)
+  Non-Markdown files can't go onto a day cell (there's no frontmatter to write)
+- **Drop a file onto a folder in the left column to move it there**, without switching to the
+  file explorer. Non-Markdown files can be dragged too, as can notes listed under Drafts or
+  Pinned notes, and a folder itself can be dragged to move it with everything inside it
+  - The move happens as soon as you let go, and a notice says where it went. Obsidian treats
+    a move as a rename, so **every link pointing at the file is updated**; drag it back if
+    you got it wrong
+  - Hovering over a collapsed folder for about half a second expands it, so you can drag all
+    the way down into a subfolder
+  - Nothing is ever overwritten: if the target folder already holds a file of that name, the
+    move is refused with a notice
+  - The cursor shows a "no drop" sign where a move makes no sense: the folder the item is
+    already in, the dragged folder itself, and anything beneath it
+- **Right-click a folder in the left column for New note here and New folder here** (the vault
+  root row included). You are asked for a name first; the right column then switches to that
+  folder — a new note opens straight away so you can start writing, a new folder is selected so
+  you can start filling it. Nothing is overwritten if the name is already taken
 - Right-click a file or folder for **Open in new tab**, **Open to the right**, **Rename**,
   **Duplicate** and **Delete**, followed by items other plugins contribute. Renaming updates
   every link pointing at the file, and deleting follows your

@@ -2,11 +2,12 @@ import { App, Modal, Notice, Setting } from "obsidian";
 import { isValidDateStr, todayStr } from "./types";
 
 /**
- * 輸入一個名稱（檔案瀏覽的「重新命名」在用）。
+ * 輸入一個名稱（檔案瀏覽的「重新命名」「新增筆記」「新增資料夾」都在用）。
  *
- * 只負責問名字並做基本檢查，真正的改名由呼叫端決定（要不要補副檔名、放哪個資料夾）。
+ * 只負責問名字並做基本檢查，要拿這個名字做什麼由呼叫端決定
+ * （要不要補副檔名、放進哪個資料夾、是建立還是改名）。
  */
-export class RenameModal extends Modal {
+export class NameModal extends Modal {
   private value: string;
 
   constructor(

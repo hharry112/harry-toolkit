@@ -402,6 +402,17 @@
   cursor: grabbing;
 }
 /*
+ * 拖曳中懸停的資料夾（放開就搬進去）。
+ * 用 outline 不用 border：border 會把那一列撐寬，整棵樹跟著抖一下。
+ * 選中那一列本來就有底色，所以框線是必要的 —— 只換底色分不出來。
+ */
+.ht-fb-row.ht-fb-drop {
+  background: rgba(var(--color-blue-rgb), 0.14);
+  outline: 1px solid var(--color-blue);
+  outline-offset: -1px;
+  border-radius: var(--radius-s);
+}
+/*
  * 樹最上面那幾列虛擬清單（釘選筆記／草稿／已排定事項）：
  * 橘色圖示標示「不是真的資料夾」，整組下面畫一條線跟底下的資料夾分開。
  */

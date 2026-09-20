@@ -46,6 +46,8 @@ export class CalendarView extends ItemView {
   private year: number;
   private month: number; // 0-based
   private dragPayload: DragPayload | null = null;
+  /** 底部檔案瀏覽正在拖曳（把檔案搬到別的資料夾）；期間同樣不自動重繪 */
+  private browserDragging = false;
   private flipTimer: number | null = null;
   private refreshTimer: number | null = null;
   /** 「未排定待辦」收合區的展開狀態，跨重繪保留，預設展開 */
@@ -76,6 +78,10 @@ export class CalendarView extends ItemView {
       save: () => ctx.save(),
       // 檔案瀏覽裡的 md 檔共用月曆這一份拖曳狀態，拖進日期格子就會排程
       makeDraggable: (el, file) => this.makeDraggable(el, { kind: "article", file }),
+      // 檔案瀏覽自己那種拖曳（搬檔案到別的資料夾）期間不要重繪，免得目標被抽掉
+      setDragging: (on) => {
+        this.browserDragging = on;
+      },
       customViews: () => this.browserViews(),
     });
   }
@@ -107,7 +113,7 @@ export class CalendarView extends ItemView {
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.refreshTimer = window.setTimeout(() => {
       this.refreshTimer = null;
-      if (this.dragPayload === null && !this.editingTodo) this.render();
+      if (this.dragPayload === null && !this.browserDragging && !this.editingTodo) this.render();
     }, 300);
   }
 
@@ -539,7 +545,13 @@ export class CalendarView extends ItemView {
         e.dataTransfer.setData("text/plain", payload.kind === "article" ? payload.file.basename : payload.item.text);
       }
     });
-    el.addEventListener("dragend", () => el.removeClass("ws-dragging"));
+    el.addEventListener("dragend", () => {
+      el.removeClass("ws-dragging");
+      // 拖曳一結束就把狀態收掉（drop 一定早於 dragend，放進日期格子的那條路已經讀過了）。
+      // 收的是「拖到別處或按 Esc 取消」那些情況：殘留的話 scheduleRender 會一直以為
+      // 還在拖曳而不重繪，檔案瀏覽的資料夾也會被誤認成可以放進日期格子的東西
+      this.dragPayload = null;
+    });
   }
 
   private makeDropTarget(cell: HTMLElement, dateStr: string) {
@@ -555,6 +567,9 @@ export class CalendarView extends ItemView {
       cell.removeClass("ws-drop-target");
       const p = this.dragPayload;
       this.dragPayload = null;
+      // 從底部檔案瀏覽拖上來的筆記也走這裡：那邊的「拖曳中」旗標要一起解除，
+      // 不然下面的 render() 會被 scheduleRender 的守衛擋掉，月曆就此不再自動更新
+      this.browserDragging = false;
       if (!p) return;
       if (p.kind === "article") {
         // 一定要連 status 一起寫：草稿拖進來才會真的變成已排程，

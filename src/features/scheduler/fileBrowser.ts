@@ -1,6 +1,6 @@
 import { App, Keymap, Menu, Notice, TFile, TFolder, setIcon } from "obsidian";
 import { scanArticles, scanPinnedNotes, setPinned } from "./articles";
-import { ConfirmModal, RenameModal } from "./modals";
+import { ConfirmModal, NameModal } from "./modals";
 import type { FileSort, FileSortKey, SchedulerSettings } from "./types";
 
 /** vault 根目錄的 path 是 "/"，設定裡用空字串表示，比較前一律正規化 */
@@ -92,6 +92,13 @@ export interface FileBrowserHost {
   /** 讓 .md 檔能拖到月曆日期格子排程（由月曆提供，與草稿共用同一份拖曳狀態） */
   makeDraggable(el: HTMLElement, file: TFile): void;
   /**
+   * 檔案瀏覽自己的拖曳（把檔案或資料夾搬到別的資料夾）開始與結束時通知宿主。
+   *
+   * 月曆收到 vault 事件會去抖動後自動重繪，而重繪會把整棵樹的 DOM 重建一次 ——
+   * 拖到一半目標被抽掉，放開就落空了。拖曳期間請宿主先別重繪。
+   */
+  setDragging?(on: boolean): void;
+  /**
    * 宿主自己畫的虛擬清單（目前只有「已排定事項」）。
    *
    * 右欄本來只會列檔案，但已排定事項裡混著待辦 —— 待辦不是檔案，排不進那條路，
@@ -139,8 +146,11 @@ interface VirtualView {
  * - 左欄是從 vault 根目錄長出來的資料夾樹，最上面幾列是跨資料夾的虛擬清單
  *   （釘選筆記／草稿／已排定事項），★ 是常用資料夾快速跳轉，↑↓ 是排序
  * - 點資料夾選它（右欄換成它的檔案）、點檔案開啟（Ctrl／Cmd＋點開新分頁）
- * - .md 檔可拖到日期格子直接排程（其他檔案拖不動，沒有 frontmatter 可寫）
- * - 右鍵一律叫出 Obsidian 內建的檔案選單，不自己做重新命名／刪除
+ * - .md 檔可拖到日期格子直接排程（其他檔案沒有 frontmatter 可寫，排了沒意義）
+ * - 檔案與資料夾都可以拖到左欄的資料夾上搬過去
+ * - 右鍵：資料夾最上面是「在這裡新增筆記／新增資料夾」，接著是自己做的
+ *   重新命名／複製副本／刪除（`file-menu` 拿不到內建那幾項，見 AGENTS 的踩雷紀錄），
+ *   最後併上 `file-menu` 這份公共選單
  *
  * 收合與篩選狀態存在實例上（跨重繪保留），選中的資料夾、展開狀態與常用清單存設定，
  * 所以重開 Obsidian 還會停在原本那個資料夾。
@@ -168,6 +178,18 @@ export class FileBrowser {
    * 選中那一列的位置，看起來就像「我點的資料夾被排到最下面去了」（2026-09-19 使用者回報）。
    */
   private treeScroll = 0;
+  /**
+   * 正在被拖曳的檔案或資料夾（放到左欄某個資料夾上就是搬過去）。
+   *
+   * 一定要自己記著，不能只靠 `dataTransfer`：`dragover` 階段讀不到 `getData` 的內容
+   * （瀏覽器的安全限制），而「這個資料夾收不收得下」正是要在那個階段就決定的事 ——
+   * 不在那時候 `preventDefault`，游標就會一直是禁止符號。
+   */
+  private drag: TFile | TFolder | null = null;
+  /** 拖曳懸停在收合的資料夾上，準備自動展開它的計時器（見 armExpand） */
+  private expandTimer: number | null = null;
+  /** 上面那個計時器正在等哪個資料夾；游標換到別一列時要重新計時 */
+  private expandTarget: string | null = null;
 
   constructor(private host: FileBrowserHost) {}
 
@@ -205,6 +227,10 @@ export class FileBrowser {
 
   /** 換資料夾或換選取時整塊重畫（工具列、篩選框、兩欄都會變） */
   private renderBody(body: HTMLElement) {
+    // 重畫就表示拖曳的來源那一列即將消失（例如 md 檔被拖到日期格子排程，月曆整個重繪）——
+    // 那種情形下來源元素早一步被抽掉，它身上的 dragend 不保證還會來。
+    // 狀態卡在「拖曳中」的話，宿主會以為拖放還沒結束而永遠不重繪，所以在這裡收乾淨
+    this.endDrag();
     body.empty();
     const root = this.host.app.vault.getRoot();
     // 虛擬清單在這裡算一次就好：每一份都是一趟全 vault 掃描，
@@ -415,9 +441,13 @@ export class FileBrowser {
     // 點整列 = 選它（右欄換成它的檔案）＋ 順手展開收合，不必瞄準那個小箭頭。
     // 樹根不收合：收起來整棵樹就只剩一列
     row.onclick = () => this.pick(folder.path, body, subs.length > 0 && depth > 0);
-    if (!folder.isRoot()) {
-      row.addEventListener("contextmenu", (e) => this.showFileMenu(e, folder));
-    }
+    // 每一列都能接住拖過來的檔案或資料夾（放開＝搬進去），vault 根目錄也算一個目的地
+    this.makeFolderDrop(row, folder, body, redraw, expanded);
+    // vault 根目錄也要有右鍵選單 —— 在根目錄底下新增筆記、資料夾是很正常的事。
+    // 它自己不能改名、不能刪，那幾項由 showFileMenu 判斷後不放進去
+    row.addEventListener("contextmenu", (e) => this.showFileMenu(e, folder, body));
+    // 資料夾本身也能被拖走；vault 根目錄沒有上一層，搬不動
+    if (!folder.isRoot()) this.makeMovable(row, folder);
 
     if (!isOpen) return;
     for (const sub of subs) {
@@ -445,6 +475,157 @@ export class FileBrowser {
     this.host.settings.fileBrowserExpanded = [...set];
     redraw();
     this.saveSoon();
+  }
+
+  /**
+   * 讓這一列可以被拖走（放到左欄某個資料夾上＝搬過去）。
+   *
+   * `.md` 檔同時也是月曆的拖曳來源（拖到日期格子排程）：兩邊各自記自己的狀態，
+   * 由放開的地方決定會發生什麼事 —— 日期格子只認月曆那一份，資料夾只認這一份。
+   */
+  private makeMovable(el: HTMLElement, item: TFile | TFolder) {
+    el.draggable = true;
+    el.addEventListener("dragstart", (e) => {
+      this.drag = item;
+      this.host.setDragging?.(true);
+      el.addClass("ws-dragging");
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", item.name);
+      }
+    });
+    el.addEventListener("dragend", () => {
+      el.removeClass("ws-dragging");
+      this.endDrag();
+    });
+  }
+
+  /** 拖曳結束（放開、或中途取消）：收掉狀態、停掉自動展開、讓宿主恢復重繪 */
+  private endDrag() {
+    this.drag = null;
+    this.cancelExpand();
+    this.host.setDragging?.(false);
+  }
+
+  /**
+   * 讓左欄的一列資料夾接得住拖過來的檔案或資料夾。
+   *
+   * 懸停在收合的資料夾上約半秒會自動展開，才有辦法一路拖到深處的子資料夾
+   * （與月曆拖曳懸停箭頭自動翻月份同一套做法）。
+   */
+  private makeFolderDrop(
+    row: HTMLElement,
+    folder: TFolder,
+    body: HTMLElement,
+    redraw: () => void,
+    expanded: Set<string>
+  ) {
+    row.addEventListener("dragover", (e) => {
+      // 不 preventDefault 就等於「這裡不能放」，游標會是禁止符號 —— 正是我們要的
+      if (!this.canDrop(folder)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      row.addClass("ht-fb-drop");
+      this.armExpand(folder, expanded, redraw);
+    });
+    row.addEventListener("dragleave", () => {
+      row.removeClass("ht-fb-drop");
+      this.cancelExpand(norm(folder.path));
+    });
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      row.removeClass("ht-fb-drop");
+      const item = this.drag;
+      // 先把拖曳狀態收乾淨：搬完會重畫，來源那一列會跟著消失，
+      // 它身上的 dragend 就不一定還來得及來（真的來了再跑一次也無妨）
+      this.endDrag();
+      if (item) void this.moveInto(item, folder, body);
+    });
+  }
+
+  /** 現在拖著的東西能不能放進這個資料夾 */
+  private canDrop(folder: TFolder): boolean {
+    const item = this.drag;
+    if (!item) return false;
+    // 本來就在裡面了，搬過去等於沒事
+    if (norm(item.parent?.path ?? "") === norm(folder.path)) return false;
+    if (item instanceof TFolder) {
+      // 資料夾不能搬進自己，也不能搬進自己底下的子孫 —— 那是把整棵子樹連根拔起，
+      // Obsidian 會丟錯，畫面上則像是資料夾憑空消失
+      for (let p: TFolder | null = folder; p; p = p.parent) {
+        if (p === item) return false;
+      }
+    }
+    return true;
+  }
+
+  /** 拖曳懸停在收合的資料夾上約半秒 → 自動展開，才拖得進裡面的子資料夾 */
+  private armExpand(folder: TFolder, expanded: Set<string>, redraw: () => void) {
+    const path = norm(folder.path);
+    // 樹根一律是展開的，等它沒有意義；沒有子資料夾的更不用等
+    if (folder.isRoot() || expanded.has(path)) return;
+    if (!folder.children.some((c) => c instanceof TFolder)) return;
+    if (this.expandTarget === path) return; // 已經在等這一列了
+    this.cancelExpand();
+    this.expandTarget = path;
+    this.expandTimer = window.setTimeout(() => {
+      this.expandTimer = null;
+      this.expandTarget = null;
+      this.toggle(path, redraw);
+    }, 500);
+  }
+
+  /**
+   * 停掉自動展開的等待。
+   *
+   * `path` 是「離開的是哪一列」：游標從 A 滑到 B 時，`dragleave A` 不保證早於
+   * `dragover B`，晚到的那一則若無條件取消，就會把剛替 B 排好的計時器清掉，
+   * 資料夾永遠等不到展開。所以只有正在等的就是這一列時才取消。
+   */
+  private cancelExpand(path?: string) {
+    if (path !== undefined && this.expandTarget !== path) return;
+    if (this.expandTimer !== null) window.clearTimeout(this.expandTimer);
+    this.expandTimer = null;
+    this.expandTarget = null;
+  }
+
+  /**
+   * 把檔案或資料夾搬進另一個資料夾。
+   *
+   * 走 `fileManager.renameFile` —— 在 Obsidian 眼裡搬家就是換一個路徑，
+   * 指向它的所有連結會一併更新，與右鍵那個「重新命名」同一條路。
+   */
+  private async moveInto(item: TFile | TFolder, folder: TFolder, body: HTMLElement) {
+    const app = this.host.app;
+    const dir = norm(folder.path);
+    const dest = dir ? `${dir}/${item.name}` : item.name;
+    const where = this.folderLabel(folder);
+    // 搬完之後 item 還是同一個物件，但 path 已經換成新的了 —— 舊路徑要先抄下來
+    const from = norm(item.path);
+
+    if (app.vault.getAbstractFileByPath(dest)) {
+      // 絕不覆蓋：同名的那一個可能是使用者辛苦寫的東西，蓋掉就回不來了
+      new Notice(`「${where}」裡已經有「${item.name}」，沒有移動。`);
+      return;
+    }
+    try {
+      await app.fileManager.renameFile(item, dest);
+    } catch (err) {
+      new Notice("移動失敗");
+      return;
+    }
+    // 搬走的正好是右欄正在看的資料夾（或它的祖先）時，把記住的路徑跟著改掉；
+    // 不然重畫時舊路徑已經不存在，右欄會安靜地跳回 vault 根目錄
+    if (item instanceof TFolder) {
+      const picked = norm(this.host.settings.fileBrowserPicked);
+      if (picked === from || picked.startsWith(`${from}/`)) {
+        this.host.settings.fileBrowserPicked = dest + picked.slice(from.length);
+        this.saveSoon();
+      }
+    }
+    new Notice(`已移動到「${where}」：${item.name}`);
+    // 不等月曆那邊的 vault 事件（去抖動 300 毫秒才重繪）：自己先把清單換掉，放開就看得到結果
+    this.renderBody(body);
   }
 
   /**
@@ -507,7 +688,7 @@ export class FileBrowser {
         // Ctrl／Cmd＋點 → 新分頁，與 Obsidian 各處的開檔行為一致
         this.host.app.workspace.getLeaf(Keymap.isModEvent(e)).openFile(f);
       };
-      row.addEventListener("contextmenu", (e) => this.showFileMenu(e, f));
+      row.addEventListener("contextmenu", (e) => this.showFileMenu(e, f, body));
       // 中鍵 → 新分頁；Chromium 會在中鍵按下時啟動自動捲動，要先擋掉才不會誤觸
       row.addEventListener("mousedown", (e) => {
         if (e.button === 1) e.preventDefault();
@@ -517,7 +698,9 @@ export class FileBrowser {
         e.preventDefault();
         this.host.app.workspace.getLeaf("tab").openFile(f);
       });
-      // 只有 md 能排程：其他檔案沒有 frontmatter 可寫，拖過去也沒意義
+      // 任何檔案都能拖到左欄的資料夾上搬家（圖片、PDF 也是要整理的東西）；
+      // 只有 md 額外能拖到日期格子排程 —— 其他檔案沒有 frontmatter 可寫，排了也沒意義
+      this.makeMovable(row, f);
       if (f.extension === "md") this.host.makeDraggable(row, f);
       if (view?.key !== PINNED_KEY) continue;
       // 釘選清單上就地取消釘選，不必再去右鍵選單找
@@ -736,11 +919,29 @@ export class FileBrowser {
    * 所以常用的幾項只能自己做，做法與內建相同（`renameFile` 會連帶更新連結、
    * `trashFile` 遵循使用者的「已刪除檔案」設定）。
    */
-  private showFileMenu(e: MouseEvent, file: TFile | TFolder) {
+  private showFileMenu(e: MouseEvent, file: TFile | TFolder, body: HTMLElement) {
     e.preventDefault();
     e.stopPropagation();
     const app = this.host.app;
     const menu = new Menu();
+
+    if (file instanceof TFolder) {
+      const folder = file;
+      // 放在最上面：在樹上對著一個資料夾按右鍵，最常想做的就是「在這裡開一篇新的」
+      menu.addItem((i) =>
+        i
+          .setTitle("在這裡新增筆記…")
+          .setIcon("file-plus")
+          .onClick(() => this.promptCreate(folder, body, "note"))
+      );
+      menu.addItem((i) =>
+        i
+          .setTitle("在這裡新增資料夾…")
+          .setIcon("folder-plus")
+          .onClick(() => this.promptCreate(folder, body, "folder"))
+      );
+      menu.addSeparator();
+    }
 
     if (file instanceof TFile) {
       const f = file;
@@ -759,32 +960,80 @@ export class FileBrowser {
       menu.addSeparator();
     }
 
-    menu.addItem((i) =>
-      i
-        .setTitle("重新命名…")
-        .setIcon("pencil")
-        .onClick(() => this.promptRename(file))
-    );
-    if (file instanceof TFile) {
-      const f = file;
+    // vault 根目錄改不了名也刪不得（它就是 vault 本身），那幾項不要出現 ——
+    // 放著也只會在按下去之後得到一句錯誤訊息
+    if (!(file instanceof TFolder && file.isRoot())) {
       menu.addItem((i) =>
         i
-          .setTitle("複製副本")
-          .setIcon("copy")
-          .onClick(() => this.duplicate(f))
+          .setTitle("重新命名…")
+          .setIcon("pencil")
+          .onClick(() => this.promptRename(file))
       );
+      if (file instanceof TFile) {
+        const f = file;
+        menu.addItem((i) =>
+          i
+            .setTitle("複製副本")
+            .setIcon("copy")
+            .onClick(() => this.duplicate(f))
+        );
+      }
+      menu.addItem((i) =>
+        i
+          .setTitle("刪除")
+          .setIcon("trash")
+          .setWarning(true)
+          .onClick(() => this.confirmDelete(file))
+      );
+      menu.addSeparator();
     }
-    menu.addItem((i) =>
-      i
-        .setTitle("刪除")
-        .setIcon("trash")
-        .setWarning(true)
-        .onClick(() => this.confirmDelete(file))
-    );
-    menu.addSeparator();
 
     app.workspace.trigger("file-menu", menu, file, "harry-toolkit-file-browser");
     menu.showAtMouseEvent(e);
+  }
+
+  /**
+   * 在某個資料夾裡新增筆記或子資料夾。
+   *
+   * **先問名字再建立**，不學內建檔案總管那套「先建一個『未命名』再就地改名」——
+   * 那需要樹上的行內編輯，這一區沒有，會變成建好之後還得再按一次右鍵去改名。
+   *
+   * 建完把右欄切過去：東西建在看不到的地方，會讓人以為沒成功。新筆記另外直接開起來，
+   * 接著就能寫；新資料夾則是選中它自己，因為下一步多半是往裡面放東西。
+   */
+  private promptCreate(folder: TFolder, body: HTMLElement, kind: "note" | "folder") {
+    const app = this.host.app;
+    const isNote = kind === "note";
+    const where = this.folderLabel(folder);
+
+    new NameModal(
+      app,
+      isNote ? `在「${where}」新增筆記` : `在「${where}」新增資料夾`,
+      isNote ? "未命名" : "新資料夾",
+      async (name) => {
+        const dir = norm(folder.path);
+        // 筆記一律補上 .md：這一區是寫作用的，要別的副檔名請用內建的檔案總管
+        const leaf = isNote ? `${name}.md` : name;
+        const path = dir ? `${dir}/${leaf}` : leaf;
+
+        if (app.vault.getAbstractFileByPath(path)) {
+          new Notice(`「${where}」裡已經有「${leaf}」了。`);
+          return;
+        }
+        try {
+          if (isNote) {
+            const file = await app.vault.create(path, "");
+            await app.workspace.getLeaf(false).openFile(file);
+          } else {
+            await app.vault.createFolder(path);
+          }
+        } catch (err) {
+          new Notice(isNote ? "新增筆記失敗" : "新增資料夾失敗");
+          return;
+        }
+        this.pick(isNote ? folder.path : path, body);
+      }
+    ).open();
   }
 
   private promptRename(file: TFile | TFolder) {
@@ -793,7 +1042,7 @@ export class FileBrowser {
     const isMd = file instanceof TFile && file.extension === "md";
     const initial = isMd ? (file as TFile).basename : file.name;
 
-    new RenameModal(app, `重新命名：${file.name}`, initial, async (name) => {
+    new NameModal(app, `重新命名：${file.name}`, initial, async (name) => {
       const finalName = isMd ? `${name}.md` : name;
       const newPath = this.pathIn(file, finalName);
       if (newPath === file.path) return;
